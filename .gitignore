@@ -1,0 +1,29 @@
+# Python cache
+__pycache__/
+*.pyc
+
+# Environment
+venv/
+.env
+
+# IDE
+.vscode/
+.idea/
+
+# Large files
+*.zip
+*.pdf# Python cache
+__pycache__/
+*.pyc
+
+# Environment
+venv/
+.env
+
+# IDE
+.vscode/
+.idea/
+
+# Large files
+*.zip
+*.pdf
