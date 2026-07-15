@@ -6,7 +6,9 @@
 
 import argparse
 import json
+import re
 import sys
+from pathlib import Path
 from typing import Iterable, List
 
 from .host_discovery import icmp_probe
@@ -95,14 +97,16 @@ def _fingerprint_results_to_frontend_records(results: List, lang: str) -> List[d
     ]
 
 
+def _render_json(records: List[dict]) -> str:
+    return json.dumps(records, ensure_ascii=False, indent=4)
+
+
 def _print_json(records: List[dict]) -> None:
-    print(json.dumps(records, ensure_ascii=False, indent=4))
+    print(_render_json(records))
 
 
-def _print_port_results(results: Iterable) -> None:
-    print("-" * 100)
-    print(f"{'HOST':<18}{'PORT':<8}{'STATUS':<16}{'FLAGS/CODE':<14}{'DETAIL'}")
-    print("-" * 100)
+def _render_port_results(results: Iterable) -> str:
+    lines = ["-" * 100, f"{'HOST':<18}{'PORT':<8}{'STATUS':<16}{'FLAGS/CODE':<14}{'DETAIL'}", "-" * 100]
 
     for result in results:
         flags_or_code = getattr(result, "response_flags", None)
@@ -110,7 +114,7 @@ def _print_port_results(results: Iterable) -> None:
             flags_or_code = getattr(result, "error_code", None)
 
         detail = getattr(result, "error_message", "")
-        print(
+        lines.append(
             f"{result.host:<18}"
             f"{result.port:<8}"
             f"{result.status:<16}"
@@ -118,16 +122,19 @@ def _print_port_results(results: Iterable) -> None:
             f"{detail}"
         )
 
-    print("-" * 100)
+    lines.append("-" * 100)
+    return "\n".join(lines)
 
 
-def _print_fingerprint_results(results: Iterable) -> None:
-    print("-" * 110)
-    print(f"{'HOST':<18}{'PORT':<8}{'OPEN':<8}{'SERVICE':<14}{'VERSION':<34}{'DETAIL'}")
-    print("-" * 110)
+def _print_port_results(results: Iterable) -> None:
+    print(_render_port_results(results))
+
+
+def _render_fingerprint_results(results: Iterable) -> str:
+    lines = ["-" * 110, f"{'HOST':<18}{'PORT':<8}{'OPEN':<8}{'SERVICE':<14}{'VERSION':<34}{'DETAIL'}", "-" * 110]
 
     for result in results:
-        print(
+        lines.append(
             f"{result.host:<18}"
             f"{result.port:<8}"
             f"{str(result.open):<8}"
@@ -136,7 +143,54 @@ def _print_fingerprint_results(results: Iterable) -> None:
             f"{result.detail}"
         )
 
-    print("-" * 110)
+    lines.append("-" * 110)
+    return "\n".join(lines)
+
+
+def _print_fingerprint_results(results: Iterable) -> None:
+    print(_render_fingerprint_results(results))
+
+
+def _safe_export_name(value: object) -> str:
+    safe_value = re.sub(r"[^A-Za-z0-9._-]+", "_", str(value)).strip("._-")
+    return safe_value or "output"
+
+
+def _build_export_filename(command: str, target: str, mode: str | None = None, use_json: bool = False) -> str:
+    base_name = f"{command}_{_safe_export_name(target)}"
+    if mode:
+        base_name = f"{base_name}_{_safe_export_name(mode)}"
+    return f"{base_name}.json" if use_json else f"{base_name}.txt"
+
+
+def _write_output_file(content: str, export_dir: str, filename: str) -> str:
+    export_path = Path(export_dir).expanduser()
+    export_path.mkdir(parents=True, exist_ok=True)
+    output_file = export_path / filename
+    output_file.write_text(content, encoding="utf-8")
+    return str(output_file)
+
+
+def _maybe_export_output(args: argparse.Namespace, content: str, command: str, target: str, mode: str | None = None) -> None:
+    if not getattr(args, "export_results", False):
+        return
+
+    export_dir = getattr(args, "export_dir", None)
+    if not export_dir:
+        try:
+            export_dir = input("请输入导出目录（留空取消导出）: ").strip()
+        except EOFError:
+            return
+
+    if not export_dir:
+        return
+
+    output_file = _write_output_file(
+        content,
+        export_dir,
+        _build_export_filename(command, target, mode=mode, use_json=getattr(args, "json", False)),
+    )
+    print(f"结果已导出至: {output_file}")
 
 
 def scan_command(args: argparse.Namespace) -> int:
@@ -163,9 +217,13 @@ def scan_command(args: argparse.Namespace) -> int:
         raise ValueError(f"不支持的扫描模式：{args.mode}")
 
     if args.json:
+        output_text = _render_json(_scan_results_to_frontend_records(results, args.mode, args.lang))
         _print_json(_scan_results_to_frontend_records(results, args.mode, args.lang))
     else:
+        output_text = _render_port_results(results)
         _print_port_results(results)
+
+    _maybe_export_output(args, output_text, "scan", args.target, mode=args.mode)
     return 0
 
 
@@ -173,9 +231,13 @@ def fingerprint_command(args: argparse.Namespace) -> int:
     target = validate_target(args.target)
     results = scan_services(target, args.ports, timeout=args.timeout)
     if args.json:
+        output_text = _render_json(_fingerprint_results_to_frontend_records(results, args.lang))
         _print_json(_fingerprint_results_to_frontend_records(results, args.lang))
     else:
+        output_text = _render_fingerprint_results(results)
         _print_fingerprint_results(results)
+
+    _maybe_export_output(args, output_text, "fingerprint", args.target)
     return 0
 
 
@@ -183,7 +245,9 @@ def ping_command(args: argparse.Namespace) -> int:
     result = icmp_probe(args.target, timeout_ms=args.timeout_ms)
     status = "alive" if result.alive else "down"
     rtt = "-" if result.rtt_ms is None else f"{result.rtt_ms:.2f} ms"
-    print(f"{result.host} ({result.resolved_ip or '-'}) {status}, rtt={rtt}, {result.reason}")
+    output_text = f"{result.host} ({result.resolved_ip or '-'}) {status}, rtt={rtt}, {result.reason}"
+    print(output_text)
+    _maybe_export_output(args, output_text, "ping", args.target)
     return 0 if result.alive else 1
 
 
@@ -206,6 +270,8 @@ def build_parser() -> argparse.ArgumentParser:
     scan_parser.add_argument("-r", "--retries", type=int, default=1, help="重试次数，仅 fin 有效")
     scan_parser.add_argument("--json", action="store_true", help="输出前端接入用 JSON")
     scan_parser.add_argument("--lang", choices=["en", "zh"], default="en", help="JSON 状态语言，默认英文")
+    scan_parser.add_argument("--export-results", action="store_true", help="执行后将结果导出到目录")
+    scan_parser.add_argument("--export-dir", default=None, help="导出目录；未提供时将提示输入")
     scan_parser.set_defaults(func=scan_command)
 
     fp_parser = subparsers.add_parser("fingerprint", help="识别开放端口服务指纹")
@@ -214,11 +280,15 @@ def build_parser() -> argparse.ArgumentParser:
     fp_parser.add_argument("-t", "--timeout", type=float, default=3.0, help="超时时间，默认 3 秒")
     fp_parser.add_argument("--json", action="store_true", help="输出前端接入用 JSON")
     fp_parser.add_argument("--lang", choices=["en", "zh"], default="en", help="JSON 状态语言，默认英文")
+    fp_parser.add_argument("--export-results", action="store_true", help="执行后将结果导出到目录")
+    fp_parser.add_argument("--export-dir", default=None, help="导出目录；未提供时将提示输入")
     fp_parser.set_defaults(func=fingerprint_command)
 
     ping_parser = subparsers.add_parser("ping", help="ICMP 主机存活探测")
     ping_parser.add_argument("target", help="目标 IPv4 地址或域名")
     ping_parser.add_argument("--timeout-ms", type=int, default=1000, help="超时时间，默认 1000ms")
+    ping_parser.add_argument("--export-results", action="store_true", help="执行后将结果导出到目录")
+    ping_parser.add_argument("--export-dir", default=None, help="导出目录；未提供时将提示输入")
     ping_parser.set_defaults(func=ping_command)
 
     return parser
