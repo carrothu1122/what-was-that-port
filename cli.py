@@ -26,10 +26,9 @@ PORT_STATUS_EN = {
     "open": "open",
     "closed": "closed",
     "filtered": "filtered",
+    "open|filtered": "open|filtered",
+    "unreachable": "unreachable",
     "error": "error",
-    "打开(丢弃)": "open",
-    "关闭(RST)": "closed",
-    "有连接(ACK)": "connected",
     "unknown": "unknown",
 }
 
@@ -37,17 +36,16 @@ PORT_STATUS_ZH = {
     "open": "开放",
     "closed": "关闭",
     "filtered": "过滤",
+    "open|filtered": "开放或被过滤",
+    "unreachable": "不可达",
     "error": "错误",
-    "打开(丢弃)": "开放",
-    "关闭(RST)": "关闭",
-    "有连接(ACK)": "已有连接",
     "unknown": "未知",
 }
 
 
 def _host_status_from_port_statuses(port_statuses: Iterable[str], lang: str) -> str:
     statuses = list(port_statuses)
-    if any(status in {"open", "closed", "打开(丢弃)", "关闭(RST)", "有连接(ACK)"} for status in statuses):
+    if any(status in {"open", "closed", "open|filtered"} for status in statuses):
         return "online" if lang == "en" else "在线"
     if statuses and all(status in {"filtered", "error"} for status in statuses):
         return "unknown" if lang == "en" else "未知"
@@ -160,7 +158,6 @@ def scan_command(args: argparse.Namespace) -> int:
             ports=args.ports,
             timeout=args.timeout,
             retries=args.retries,
-            delay=args.delay,
         )
     else:
         raise ValueError(f"不支持的扫描模式：{args.mode}")
@@ -207,7 +204,6 @@ def build_parser() -> argparse.ArgumentParser:
     scan_parser.add_argument("-t", "--timeout", type=float, default=1.0, help="超时时间，默认 1 秒")
     scan_parser.add_argument("-w", "--workers", type=int, default=50, help="并发线程数，仅 connect/syn 有效")
     scan_parser.add_argument("-r", "--retries", type=int, default=1, help="重试次数，仅 fin 有效")
-    scan_parser.add_argument("-d", "--delay", type=float, default=0.05, help="端口间隔，仅 fin 有效")
     scan_parser.add_argument("--json", action="store_true", help="输出前端接入用 JSON")
     scan_parser.add_argument("--lang", choices=["en", "zh"], default="en", help="JSON 状态语言，默认英文")
     scan_parser.set_defaults(func=scan_command)
@@ -238,8 +234,6 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("workers 必须大于 0")
     if hasattr(args, "retries") and args.retries < 0:
         parser.error("retries 不能小于 0")
-    if hasattr(args, "delay") and args.delay < 0:
-        parser.error("delay 不能小于 0")
     if hasattr(args, "timeout_ms") and args.timeout_ms <= 0:
         parser.error("timeout-ms 必须大于 0")
 
