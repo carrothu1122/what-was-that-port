@@ -56,6 +56,14 @@ python -m tcp_scanner scan 127.0.0.1 -p 22 --mode connect --json
 python -m tcp_scanner scan 127.0.0.1 -p 22 --mode connect --json --lang zh
 ```
 
+如需把扫描结果同时导出到文件，可开启导出选项：
+
+```bash
+python -m tcp_scanner scan 127.0.0.1 -p 22 --mode connect --export-results --export-dir ./exports
+```
+
+如果不指定 `--export-dir`，程序会在执行后提示你输入导出目录；未输入时则不会写文件。三类命令（scan、fingerprint、ping）都支持该选项。
+
 服务识别也支持相同 JSON 格式，`service` 会尽量填入识别结果：
 
 ```bash
