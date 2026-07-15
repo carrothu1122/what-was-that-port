@@ -7,14 +7,11 @@ TCP FIN 端口扫描器
 仅负责判断端口状态，不进行服务识别。
 
 判断规则：
-1. 收到 TCP RST：
-   closed
-
-2. 没有收到响应：
-   open|filtered
-
-3. 收到特定 ICMP 不可达报文：
-   filtered
+1. 收到 TCP RST → closed
+2. 没有收到响应 → open|filtered
+3. ICMP Type 3 Code 9、10、13 → filtered
+4. ICMP Type 3 Code 0、1、2 → unreachable
+5. 其他无法判断的响应 → unknown
 
 安装：
     pip install scapy
@@ -26,15 +23,15 @@ Linux：
 
 import argparse
 import random
-import sys
-import time
-from typing import List
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
+from typing import Dict, List
 
 try:
     from scapy.all import IP, TCP, ICMP, sr1, conf
-except ImportError:
-    print("错误：未安装 Scapy，请执行：pip install scapy")
-    sys.exit(1)
+except ImportError as exc:
+    raise ImportError(
+        "错误：未安装 Scapy，请执行：pip install scapy"
+    ) from exc
 
 try:
     from .models import TCPFINScanResult
@@ -50,27 +47,23 @@ except ImportError:  # 兼容直接运行本文件：python tcp_fin_scanner.py
 
 def classify_response(response):
     """
-    根据响应判断端口状态（对应 PPT 三种情况）。
+    根据响应判断端口状态。
 
     返回：
         state, reason
     """
 
     if response is None:
-        # 端口打开，且没有连接 → 直接丢弃（无响应）
-        return "打开(丢弃)", "无响应 — 端口打开且无连接, 直接丢弃"
+        return "open|filtered", "无响应 — 端口可能开放，也可能被防火墙过滤"
 
     if response.haslayer(TCP):
         flags = int(response[TCP].flags)
 
-        # 收到 ACK → 存在对应连接
-        if flags & 0x10 and not (flags & 0x04):
-            return "有连接(ACK)", "收到ACK — 存在对应连接"
-
         # 收到 RST → 端口关闭
         if flags & 0x04:
-            return "关闭(RST)", "收到RST — 端口关闭"
+            return "closed", "收到RST — 端口关闭"
 
+        # 其他 TCP 响应（包括单独 ACK）→ unknown
         flag_text = response[TCP].sprintf("%TCP.flags%")
         return "unknown", f"收到 TCP 标志：{flag_text}"
 
@@ -78,9 +71,15 @@ def classify_response(response):
         icmp_type = int(response[ICMP].type)
         icmp_code = int(response[ICMP].code)
 
-        if icmp_type == 3 and icmp_code in {1, 2, 3, 9, 10, 13}:
+        # ICMP Type 3 Code 9、10、13 → filtered
+        if icmp_type == 3 and icmp_code in {9, 10, 13}:
             return "filtered", f"收到 ICMP 不可达，type={icmp_type}，code={icmp_code}"
 
+        # ICMP Type 3 Code 0、1、2 → unreachable
+        if icmp_type == 3 and icmp_code in {0, 1, 2}:
+            return "unreachable", f"收到 ICMP 不可达，type={icmp_type}，code={icmp_code}"
+
+        # 其他 ICMP 响应 → unknown
         return "unknown", f"收到 ICMP，type={icmp_type}，code={icmp_code}"
 
     return "unknown", "收到无法识别的响应"
@@ -99,7 +98,7 @@ def fin_scan_port(
         target: 目标 IPv4 地址
         port: 端口号
         timeout: 等待响应超时时间（秒）
-        retries: 无响应时的重试次数
+        retries: 无响应后的额外重试次数
 
     Returns:
         TCPFINScanResult: 扫描结果
@@ -171,35 +170,55 @@ def scan_ports(
     ports: List[int],
     timeout: float = 1.0,
     retries: int = 1,
-    delay: float = 0.05
+    max_workers: int = 50
 ) -> List[TCPFINScanResult]:
     """
-    扫描多个端口（纯逻辑，不打印）。
+    扫描多个端口（纯逻辑，不打印），使用线程池并发扫描。
 
     Args:
         target: 目标 IPv4 地址
         ports: 端口列表
         timeout: 等待响应超时时间（秒）
-        retries: 无响应时的重试次数
-        delay: 每个端口之间的延迟（秒），用于降低扫描速率
+        retries: 无响应后的额外重试次数
+        max_workers: 最大并发线程数，默认 50
+
+    Raises:
+        ValueError: max_workers < 1 时抛出
 
     Returns:
         List[TCPFINScanResult]: 扫描结果列表，按端口号排序
     """
 
-    results = []
+    if max_workers < 1:
+        raise ValueError("max_workers 必须大于等于 1")
 
-    for port in ports:
-        result = fin_scan_port(
-            target=target,
-            port=port,
-            timeout=timeout,
-            retries=retries
-        )
-        results.append(result)
+    results: List[TCPFINScanResult] = []
 
-        if delay > 0:
-            time.sleep(delay)
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_port: Dict[Future, int] = {}
+        for port in ports:
+            future = executor.submit(
+                fin_scan_port,
+                target=target,
+                port=port,
+                timeout=timeout,
+                retries=retries
+            )
+            future_to_port[future] = port
+
+        for future in as_completed(future_to_port):
+            port = future_to_port[future]
+            try:
+                result = future.result()
+            except Exception as e:
+                result = TCPFINScanResult(
+                    host=target,
+                    port=port,
+                    status="error",
+                    response_flags=None,
+                    error_message=str(e)
+                )
+            results.append(result)
 
     results.sort(key=lambda r: r.port)
     return results
@@ -211,14 +230,14 @@ def scan_ports(
 
 def print_scan_results(
     results: List[TCPFINScanResult],
-    show_all: bool = True
+    show_all: bool = False
 ) -> None:
     """
     打印扫描结果列表。
 
     Args:
         results: 扫描结果列表
-        show_all: 是否显示全部端口（默认全部显示）
+        show_all: 是否显示全部端口（默认只显示非 closed 端口）
     """
 
     print("-" * 70)
@@ -226,7 +245,7 @@ def print_scan_results(
     print("-" * 70)
 
     for r in results:
-        if not show_all and "关闭" in r.status:
+        if not show_all and r.status == "closed":
             continue
         print(f"{r.port:<10}{r.status:<22}{r.error_message}")
 
@@ -239,10 +258,10 @@ def print_summary(results: List[TCPFINScanResult]) -> None:
     """
 
     statistics = {
-        "打开(丢弃)": 0,
-        "关闭(RST)": 0,
-        "有连接(ACK)": 0,
+        "open|filtered": 0,
+        "closed": 0,
         "filtered": 0,
+        "unreachable": 0,
         "unknown": 0,
         "error": 0,
     }
@@ -255,19 +274,19 @@ def print_summary(results: List[TCPFINScanResult]) -> None:
             statistics["unknown"] += 1
 
     print("\n========== 扫描汇总 ==========")
-    print(f"打开(丢弃)  ：{statistics['打开(丢弃)']}  ← 端口打开且无连接，直接丢弃")
-    print(f"关闭(RST)  ：{statistics['关闭(RST)']}  ← 端口关闭，返回RST")
-    print(f"有连接(ACK)：{statistics['有连接(ACK)']}  ← 存在对应连接，返回ACK")
-    print(f"filtered   ：{statistics['filtered']}")
-    print(f"unknown    ：{statistics['unknown']}")
-    print(f"error      ：{statistics['error']}")
+    print(f"open|filtered：{statistics['open|filtered']}  ← 端口可能开放，也可能被防火墙过滤")
+    print(f"closed       ：{statistics['closed']}  ← 端口关闭，返回RST")
+    print(f"filtered     ：{statistics['filtered']}  ← ICMP Type 3 Code 9/10/13")
+    print(f"unreachable  ：{statistics['unreachable']}  ← ICMP Type 3 Code 0/1/2")
+    print(f"unknown      ：{statistics['unknown']}")
+    print(f"error        ：{statistics['error']}")
     print("==============================")
 
     print(
-        "\n说明：FIN 扫描中，端口打开且无连接时目标直接丢弃 FIN 包（无响应）；"
+        "\n说明：无响应表示端口可能开放，也可能被防火墙过滤；"
     )
     print(
-        "端口关闭时返回 RST；若已存在连接则返回 ACK。"
+        "收到 RST 表示端口关闭；其他 TCP 响应视为 unknown。"
     )
 
 
@@ -306,20 +325,13 @@ def create_parser():
         "-r", "--retries",
         type=int,
         default=1,
-        help="无响应时重试次数，默认 1 次"
-    )
-
-    parser.add_argument(
-        "-d", "--delay",
-        type=float,
-        default=0.05,
-        help="每个端口之间的延迟，默认 0.05 秒"
+        help="无响应后的额外重试次数，默认 1 次"
     )
 
     parser.add_argument(
         "--show-all",
         action="store_true",
-        help="显示全部端口（默认即全部显示，此选项保留兼容）"
+        help="显示全部端口（包括 closed 端口）"
     )
 
     return parser
@@ -337,8 +349,6 @@ def main():
         parser.error("timeout 必须大于 0")
     if args.retries < 0:
         parser.error("retries 不能小于 0")
-    if args.delay < 0:
-        parser.error("delay 不能小于 0")
 
     print("请确保仅扫描自己拥有或已获得明确授权的主机。")
 
@@ -355,7 +365,6 @@ def main():
             ports=args.ports,
             timeout=args.timeout,
             retries=args.retries,
-            delay=args.delay,
         )
 
         print_scan_results(results, show_all=args.show_all)
