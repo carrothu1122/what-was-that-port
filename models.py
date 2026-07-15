@@ -29,15 +29,17 @@ class TCPConnectScanResult:
     Attributes:
         host: 目标主机 IP
         port: 目标端口号
-        status: open / closed / filtered / error
-        error_code: socket 错误码，成功时为 0
+        status: open / closed / filtered / error / cancelled
+        error_code: socket 错误码，成功时为 0，不适用时为 None
         error_message: 详细描述信息
+        response_time_ms: 响应时间（毫秒），无则为 None
     """
     host: str
     port: int
     status: str
     error_code: Optional[int]
     error_message: str
+    response_time_ms: Optional[float] = None
 
 
 @dataclass
@@ -64,15 +66,18 @@ class TCPFINScanResult:
     """
     TCP FIN 扫描结果
 
-    PPT 对应：
-        若对应一个连接 → 返回ACK         → status="有连接(ACK)"
-        若端口打开，且没连接 → 直接丢弃   → status="打开(丢弃)"
-        若端口关闭 → 返回RST             → status="关闭(RST)"
+    判断规则：
+        RST                    → status="closed"
+        无响应                  → status="open|filtered"
+        ICMP(3,9/10/13)       → status="filtered"
+        ICMP(3,0/1/2)         → status="unreachable"
+        其他无法判断的响应       → status="unknown"
+        本地异常                → status="error"
 
     Attributes:
         host: 目标主机 IP
         port: 目标端口号
-        status: 打开(丢弃) / 关闭(RST) / 有连接(ACK) / filtered / unknown / error
+        status: closed / open|filtered / filtered / unreachable / unknown / error
         response_flags: TCP 标志位，无则为 None
         error_message: 详细描述信息
     """
