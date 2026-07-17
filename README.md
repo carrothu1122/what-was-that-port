@@ -2,89 +2,6 @@
 
 本仓库包含三种基于不同原理的 TCP 端口扫描器，使用 Python 实现，用于判断目标主机端口的开放状态。
 
-## 当前整合状态
-
-`tcp_scanner` 已整理为标准 Python package，可从仓库根目录通过模块方式运行：
-
-```bash
-python -m tcp_scanner --help
-```
-
-统一入口包含三类功能：
-
-```bash
-# TCP Connect 扫描（普通权限通常可运行）
-python -m tcp_scanner scan 192.168.1.1 -p 22,80,443 --mode connect
-
-# TCP SYN 扫描（需要 scapy，通常需要 sudo/root）
-sudo python -m tcp_scanner scan 192.168.1.1 -p 1-1024 --mode syn
-
-# TCP FIN 扫描（需要 scapy，通常需要 sudo/root）
-sudo python -m tcp_scanner scan 192.168.1.1 -p 21,22,80 --mode fin
-
-# 服务指纹识别
-python -m tcp_scanner fingerprint 192.168.1.1 -p 22,80,443
-
-# ICMP 主机存活探测（通常需要 sudo/root）
-sudo python -m tcp_scanner ping 192.168.1.1
-```
-
-前端接入可使用 JSON 输出：
-
-```bash
-python -m tcp_scanner scan 127.0.0.1 -p 22 --mode connect --json
-```
-
-输出格式为数组，每个端口一条记录：
-
-```json
-[
-    {
-        "ip": "127.0.0.1",
-        "host_status": "online",
-        "method": "TCP Connect",
-        "port": 22,
-        "port_status": "open",
-        "service": null
-    }
-]
-```
-
-如果需要中文状态：
-
-```bash
-python -m tcp_scanner scan 127.0.0.1 -p 22 --mode connect --json --lang zh
-```
-
-如需把扫描结果同时导出到文件，可开启导出选项：
-
-```bash
-python -m tcp_scanner scan 127.0.0.1 -p 22 --mode connect --export-results --export-dir ./exports
-```
-
-如果不指定 `--export-dir`，程序会在执行后提示你输入导出目录；未输入时则不会写文件。三类命令（scan、fingerprint、ping）都支持该选项。
-
-服务识别也支持相同 JSON 格式，`service` 会尽量填入识别结果：
-
-```bash
-python -m tcp_scanner fingerprint 127.0.0.1 -p 22,80 --json
-```
-
-新增/合并模块：
-
-| 文件 | 功能 |
-|------|------|
-| `cli.py` / `__main__.py` | 统一命令行入口 |
-| `host_discovery.py` | ICMP 主机存活探测 |
-| `fingerprints.py` | 服务指纹库 |
-| `service_fingerprint.py` | TCP 服务识别 |
-
-已修复：
-
-- `tcp_connect_scanner.py` 原本没有实际调用 `connect/connect_ex`，会把合法端口误判为 open。
-- 包内导入已兼容 `python -m tcp_scanner ...` 方式。
-- socket 创建异常会被转换为单端口 `error` 结果，不再中断整批扫描。
-
 | 文件 | 扫描类型 | 原理 | 权限要求 |
 |------|---------|------|---------|
 | `tcp_connect_scanner.py` | TCP Connect 扫描 | 完整 TCP 三次握手 | 普通用户 |
@@ -116,8 +33,8 @@ python -m tcp_scanner fingerprint 127.0.0.1 -p 22,80 --json
 #### 模块导入
 
 ```python
-from tcp_scanner.tcp_connect_scanner import TCPConnectScanner, print_scan_results
-from tcp_scanner.utils import parse_ports
+from tcp_connect_scanner import TCPConnectScanner, print_scan_results
+from utils import parse_ports
 
 scanner = TCPConnectScanner(timeout=1.0)
 ports = parse_ports("22,80,443")
@@ -183,8 +100,8 @@ pip install scapy
 #### 模块导入
 
 ```python
-from tcp_scanner.tcp_syn_scanner import TCPSYNScanner, print_scan_results
-from tcp_scanner.utils import parse_ports
+from tcp_syn_scanner import TCPSYNScanner, print_scan_results
+from utils import parse_ports
 
 scanner = TCPSYNScanner(timeout=2.0)
 ports = parse_ports("22,80,443")
@@ -325,7 +242,7 @@ error      ：0
 ### 4.2 公共工具（`utils.py`）
 
 ```python
-from tcp_scanner.utils import parse_ports, validate_target
+from utils import parse_ports, validate_target
 
 ports = parse_ports("22,80,443")     # → [22, 80, 443]
 ports = parse_ports("1-1024")        # → [1, 2, ..., 1024]
@@ -336,8 +253,8 @@ ip   = validate_target("192.168.1.1") # 校验并返回 IPv4 字符串
 
 ```python
 # ---- TCP Connect ----
-from tcp_scanner.tcp_connect_scanner import TCPConnectScanner
-from tcp_scanner.utils import parse_ports
+from tcp_connect_scanner import TCPConnectScanner
+from utils import parse_ports
 
 scanner = TCPConnectScanner(timeout=1.0)
 results = scanner.scan_ports("192.168.1.1", parse_ports("22,80,443"))
@@ -345,7 +262,7 @@ for r in results:
     print(f"{r.host}:{r.port} → {r.status}")
 
 # ---- TCP SYN ----
-from tcp_scanner.tcp_syn_scanner import TCPSYNScanner
+from tcp_syn_scanner import TCPSYNScanner
 
 scanner = TCPSYNScanner(timeout=2.0)
 results = scanner.scan_ports("192.168.1.1", parse_ports("22,80,443"))
@@ -353,7 +270,7 @@ for r in results:
     print(f"{r.host}:{r.port} → {r.status}")
 
 # ---- TCP FIN ----
-from tcp_scanner.tcp_fin_scanner import scan_ports as fin_scan_ports
+from tcp_fin_scanner import scan_ports as fin_scan_ports
 
 results = fin_scan_ports("192.168.1.1", parse_ports("22,80,443"), timeout=1.0)
 for r in results:
