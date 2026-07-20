@@ -28,10 +28,16 @@ from typing import Dict, List
 
 try:
     from scapy.all import IP, TCP, ICMP, sr1, conf
+    _SCAPY_IMPORT_ERROR = None
 except ImportError as exc:
-    raise ImportError(
-        "错误：未安装 Scapy，请执行：pip install scapy"
-    ) from exc
+    # Keep pure helpers importable and testable even when Scapy is not installed.
+    # Actual raw-packet scanning will report a structured error from fin_scan_port.
+    IP = None
+    TCP = object()
+    ICMP = object()
+    sr1 = None
+    conf = None
+    _SCAPY_IMPORT_ERROR = exc
 
 try:
     from .models import TCPFINScanResult
@@ -111,6 +117,15 @@ def fin_scan_port(
             status="error",
             response_flags=None,
             error_message="Invalid port number"
+        )
+
+    if _SCAPY_IMPORT_ERROR is not None:
+        return TCPFINScanResult(
+            host=target,
+            port=port,
+            status="error",
+            response_flags=None,
+            error_message="错误：未安装 Scapy，请执行：pip install scapy",
         )
 
     try:
@@ -340,7 +355,8 @@ def create_parser():
 def main():
     """命令行主函数。"""
 
-    conf.verb = 0
+    if conf is not None:
+        conf.verb = 0
 
     parser = create_parser()
     args = parser.parse_args()

@@ -46,9 +46,11 @@ def convert_status(status: Any) -> str:
         "open": "开放",
         "closed": "关闭",
         "filtered": "过滤",
+        "open|filtered": "开放或被过滤",
+        "unreachable": "不可达",
         "error": "错误",
         "unknown": "未知",
-        "打开(丢弃)": "开放或过滤",
+        "打开(丢弃)": "开放或被过滤",
         "关闭(RST)": "关闭",
         "有连接(ACK)": "有连接",
     }
@@ -111,7 +113,7 @@ def scan_tcp_connect(ip: str, ports: list[int], host_status: str) -> list[dict]:
     """调用 TCP Connect 扫描模块。"""
     rows: list[dict] = []
     try:
-        from tcp_scanner.tcp_connect_scanner import TCPConnectScanner
+        from tcp_connect_scanner import TCPConnectScanner
 
         scanner = TCPConnectScanner(timeout=1.0)
         scan_results = scanner.scan_ports(host=ip, ports=ports, max_workers=50)
@@ -135,7 +137,7 @@ def scan_tcp_syn(ip: str, ports: list[int], host_status: str) -> list[dict]:
     """调用 TCP SYN 扫描模块。SYN 通常需要 sudo/root 权限。"""
     rows: list[dict] = []
     try:
-        from tcp_scanner.tcp_syn_scanner import TCPSYNScanner
+        from tcp_syn_scanner import TCPSYNScanner
 
         scanner = TCPSYNScanner(timeout=2.0)
         scan_results = scanner.scan_ports(host=ip, ports=ports, max_workers=50)
@@ -159,14 +161,13 @@ def scan_tcp_fin(ip: str, ports: list[int], host_status: str) -> list[dict]:
     """调用 TCP FIN 扫描模块。FIN 通常需要 sudo/root 权限。"""
     rows: list[dict] = []
     try:
-        from tcp_scanner.tcp_fin_scanner import scan_ports
+        from tcp_fin_scanner import scan_ports
 
         scan_results = scan_ports(
             target=ip,
             ports=ports,
             timeout=1.0,
             retries=1,
-            delay=0.02,
         )
 
         for r in scan_results:

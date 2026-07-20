@@ -11,10 +11,16 @@ import sys
 from pathlib import Path
 from typing import Iterable, List
 
-from .host_discovery import icmp_probe
-from .service_fingerprint import scan_services
-from .tcp_connect_scanner import TCPConnectScanner
-from .utils import parse_ports, validate_target
+try:
+    from .host_discovery import icmp_probe
+    from .service_fingerprint import scan_services
+    from .tcp_connect_scanner import TCPConnectScanner
+    from .utils import parse_ports, validate_target
+except ImportError:
+    from host_discovery import icmp_probe
+    from service_fingerprint import scan_services
+    from tcp_connect_scanner import TCPConnectScanner
+    from utils import parse_ports, validate_target
 
 
 METHOD_LABELS = {
@@ -47,7 +53,7 @@ PORT_STATUS_ZH = {
 
 def _host_status_from_port_statuses(port_statuses: Iterable[str], lang: str) -> str:
     statuses = list(port_statuses)
-    if any(status in {"open", "closed", "open|filtered"} for status in statuses):
+    if any(status in {"open", "closed"} for status in statuses):
         return "online" if lang == "en" else "在线"
     if statuses and all(status in {"filtered", "error"} for status in statuses):
         return "unknown" if lang == "en" else "未知"
@@ -200,12 +206,18 @@ def scan_command(args: argparse.Namespace) -> int:
         scanner = TCPConnectScanner(timeout=args.timeout)
         results = scanner.scan_ports(target, args.ports, max_workers=args.workers)
     elif args.mode == "syn":
-        from .tcp_syn_scanner import TCPSYNScanner
+        try:
+            from .tcp_syn_scanner import TCPSYNScanner
+        except ImportError:
+            from tcp_syn_scanner import TCPSYNScanner
 
         scanner = TCPSYNScanner(timeout=args.timeout)
         results = scanner.scan_ports(target, args.ports, max_workers=args.workers)
     elif args.mode == "fin":
-        from .tcp_fin_scanner import scan_ports as fin_scan_ports
+        try:
+            from .tcp_fin_scanner import scan_ports as fin_scan_ports
+        except ImportError:
+            from tcp_fin_scanner import scan_ports as fin_scan_ports
 
         results = fin_scan_ports(
             target=target,

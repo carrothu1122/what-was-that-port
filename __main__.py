@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-from .cli import main
+try:
+    from .cli import main
+except ImportError:
+    from cli import main
 
 
 if __name__ == "__main__":

@@ -12,7 +12,10 @@ import ssl
 from dataclasses import dataclass
 from typing import Iterable, List, Optional, Tuple
 
-from .fingerprints import DEFAULT_PRIORITY, FINGERPRINTS, PORT_PRIORITY
+try:
+    from .fingerprints import DEFAULT_PRIORITY, FINGERPRINTS, PORT_PRIORITY
+except ImportError:
+    from fingerprints import DEFAULT_PRIORITY, FINGERPRINTS, PORT_PRIORITY
 
 
 @dataclass
