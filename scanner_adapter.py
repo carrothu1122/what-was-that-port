@@ -55,7 +55,18 @@ def convert_status(status: Any) -> str:
     return status_map.get(str(status), str(status))
 
 
-def make_row(ip: str, host_status: str, method: str, port: Any, port_status: str, service: str | None = None) -> dict:
+# ===== 新增：扩展 make_row 以传递详情、耗时、错误原因所需字段 =====
+def make_row(
+    ip: str,
+    host_status: str,
+    method: str,
+    port: Any,
+    port_status: str,
+    service: str | None = None,
+    response_flags: str | None = None,
+    error_message: str | None = None,
+    elapsed_ms: float | None = None,
+) -> dict:
     """生成 GUI 表格需要的一行结果。"""
     return {
         "ip": ip,
@@ -64,6 +75,10 @@ def make_row(ip: str, host_status: str, method: str, port: Any, port_status: str
         "port": port,
         "port_status": port_status,
         "service": service if service is not None else get_service_name(port),
+        # ===== 新增字段 =====
+        "response_flags": response_flags,
+        "error_message": error_message,
+        "elapsed_ms": elapsed_ms,
     }
 
 
@@ -76,6 +91,8 @@ def make_error_row(ip: str, host_status: str, method: str, message: str) -> dict
         port="-",
         port_status=f"错误：{message}",
         service="-",
+        # ===== 新增：错误行携带原始错误信息 =====
+        error_message=message,
     )
 
 
@@ -123,6 +140,9 @@ def scan_tcp_connect(ip: str, ports: list[int], host_status: str) -> list[dict]:
                 method="TCP Connect",
                 port=r.port,
                 port_status=convert_status(r.status),
+                # ===== 新增：传递 Connect 的耗时和错误信息 =====
+                error_message=getattr(r, "error_message", None),
+                elapsed_ms=getattr(r, "response_time_ms", None),
             ))
 
     except Exception as exc:
@@ -147,6 +167,9 @@ def scan_tcp_syn(ip: str, ports: list[int], host_status: str) -> list[dict]:
                 method="TCP SYN",
                 port=r.port,
                 port_status=convert_status(r.status),
+                # ===== 新增：传递 SYN 的响应标志和错误信息 =====
+                response_flags=getattr(r, "response_flags", None),
+                error_message=getattr(r, "error_message", None),
             ))
 
     except Exception as exc:
@@ -176,6 +199,9 @@ def scan_tcp_fin(ip: str, ports: list[int], host_status: str) -> list[dict]:
                 method="TCP FIN",
                 port=r.port,
                 port_status=convert_status(r.status),
+                # ===== 新增：传递 FIN 的响应标志和错误信息 =====
+                response_flags=getattr(r, "response_flags", None),
+                error_message=getattr(r, "error_message", None),
             ))
 
     except Exception as exc:

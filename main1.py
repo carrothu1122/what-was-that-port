@@ -1,6 +1,13 @@
 import csv
 import ipaddress
 import sys
+from pathlib import Path
+
+# 确保 tcp_scanner 包的父目录在 sys.path 中，
+# 这样无论在哪个目录下运行 main1.py 都能正确 import tcp_scanner
+_PARENT_DIR = Path(__file__).resolve().parent.parent
+if str(_PARENT_DIR) not in sys.path:
+    sys.path.insert(0, str(_PARENT_DIR))
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QBrush
@@ -49,11 +56,134 @@ COMMON_SERVICES = {
     110: "POP3",
     143: "IMAP",
     443: "HTTPS",
+    445: "SMB",
     3306: "MySQL",
-    3389: "Remote Desktop",
+    3389: "RDP",
     6379: "Redis",
     8080: "HTTP-Proxy",
 }
+
+# ===== 新增：风险端口定义 =====
+# 高风险端口（红色）：常见攻击目标，开放即高危
+HIGH_RISK_PORTS: dict[int, str] = {
+    21: "FTP 明文传输，易被嗅探和暴力破解",
+    23: "Telnet 明文传输，已被 SSH 替代",
+    135: "RPC 曾爆发大量远程利用漏洞",
+    139: "NetBIOS 易泄露网络信息",
+    445: "SMB 勒索软件常用传播端口",
+    3389: "RDP 远程桌面，暴力破解高频目标",
+}
+
+# 中风险端口（橙色）：需关注的安全风险
+MEDIUM_RISK_PORTS: dict[int, str] = {
+    22: "SSH 常见暴力破解目标",
+    25: "SMTP 可能被用于垃圾邮件转发",
+    53: "DNS 可能遭受放大攻击",
+    110: "POP3 明文邮件协议",
+    143: "IMAP 明文邮件协议",
+    161: "SNMP 默认 community string 风险",
+    3306: "MySQL 数据库对外暴露风险",
+    5432: "PostgreSQL 数据库对外暴露风险",
+    6379: "Redis 未授权访问风险",
+    8080: "HTTP 代理 / Web 管理端口",
+    27017: "MongoDB 未授权访问风险",
+}
+
+
+# ===== 新增：辅助函数 — 获取端口风险等级 =====
+def get_risk_level(port: object, status: str) -> str:
+    """返回风险等级：high / medium / none"""
+    if status not in ("open", "开放"):
+        return "none"
+    try:
+        p = int(port)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return "none"
+    if p in HIGH_RISK_PORTS:
+        return "high"
+    if p in MEDIUM_RISK_PORTS:
+        return "medium"
+    return "none"
+
+
+# ===== 新增：辅助函数 — 获取风险原因文本 =====
+def get_risk_reason(port: object, status: str) -> str:
+    """返回风险原因描述，无风险时返回空字符串"""
+    level = get_risk_level(port, status)
+    try:
+        p = int(port)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return ""
+    if level == "high":
+        return HIGH_RISK_PORTS.get(p, "")
+    if level == "medium":
+        return MEDIUM_RISK_PORTS.get(p, "")
+    return ""
+
+
+# ===== 新增：辅助函数 — 生成详情列文本 =====
+def build_detail_text(
+    port: object,
+    status: str,
+    response_flags: str | None,
+    error_message: str | None,
+) -> str:
+    """生成详情列显示内容：TCP Flags / ICMP / 风险等级"""
+    parts: list[str] = []
+
+    # TCP Flags 或 ICMP 信息
+    if response_flags:
+        parts.append(f"Flags: {response_flags}")
+
+    # 风险等级
+    level = get_risk_level(port, status)
+    if level == "high":
+        parts.append("⚠ 高风险")
+    elif level == "medium":
+        parts.append("⚡ 中风险")
+
+    risk_reason = get_risk_reason(port, status)
+    if risk_reason:
+        parts.append(risk_reason)
+
+    # 状态说明
+    status_detail_map = {
+        "开放": "端口正常响应连接请求",
+        "关闭": "端口拒绝连接（RST）",
+        "过滤": "防火墙或过滤规则阻止探测",
+        "开放或过滤": "端口可能开放或被防火墙过滤",
+        "错误": "扫描过程发生异常",
+        "未知": "无法判断端口状态",
+    }
+    raw_status = str(status)
+    if raw_status in status_detail_map:
+        parts.append(status_detail_map[raw_status])
+    elif error_message and raw_status not in ("开放", "关闭", "过滤", "开放或过滤"):
+        parts.append(str(error_message))
+
+    return "；".join(parts) if parts else "-"
+
+
+# ===== 新增：辅助函数 — 错误原因列文本 =====
+def build_error_reason(status: str, error_message: str | None) -> str:
+    """错误原因列：仅显示权限/网络/程序异常，普通状态留空"""
+    raw_status = str(status)
+    msg = str(error_message).lower() if error_message else ""
+
+    if raw_status in ("error", "错误"):
+        if "permission" in msg or "权限" in msg or "denied" in msg:
+            return "权限错误"
+        if "timeout" in msg or "refused" in msg or "network" in msg or "网络" in msg or "unreachable" in msg:
+            return "网络异常"
+        return "程序异常"
+
+    # 非 error 状态，检查是否有异常信息
+    if msg and any(kw in msg for kw in ("permission", "权限", "denied", "timeout", "refused", "network", "网络", "error", "exception")):
+        if "permission" in msg or "权限" in msg or "denied" in msg:
+            return "权限错误"
+        return "网络异常"
+
+    return ""
 
 
 class PortScannerWindow(QMainWindow):
@@ -65,12 +195,36 @@ class PortScannerWindow(QMainWindow):
 
         self.results = []
 
+        # ===== 新增：标记是否已设置初始列宽 =====
+        self._columns_sized = False
+
         self.init_ui()
         self.apply_style()
 
         if not ADAPTER_AVAILABLE:
             self.log("[WARNING] scanner_adapter.py 导入失败，当前使用模拟扫描模式")
             self.log(f"[WARNING] 错误信息：{ADAPTER_ERROR}")
+
+    # ===== 新增：窗口首次显示后设置列宽（仅一次，不覆盖用户手动调整） =====
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not self._columns_sized:
+            self._columns_sized = True
+            self.setup_result_table_columns()
+
+    # ===== 新增：列宽初始化（仅在窗口首次显示时调用一次） =====
+    def setup_result_table_columns(self):
+        """设置表格各列初始宽度。仅详情列(索引6)使用 Stretch 吸收剩余空间。
+        此方法仅在窗口首次 showEvent 时调用一次，不会在扫描/排序/筛选时重复执行。"""
+        self.result_table.setColumnWidth(0, 130)   # 目标 IP
+        self.result_table.setColumnWidth(1, 90)    # 主机状态
+        self.result_table.setColumnWidth(2, 120)   # 扫描方式
+        self.result_table.setColumnWidth(3, 75)    # 端口号
+        self.result_table.setColumnWidth(4, 95)    # 端口状态
+        self.result_table.setColumnWidth(5, 110)   # 服务名称
+        # 列6(详情) 为 Stretch 模式，不设固定宽度
+        self.result_table.setColumnWidth(7, 90)    # 耗时
+        self.result_table.setColumnWidth(8, 260)   # 错误原因
 
     def init_ui(self):
         central_widget = QWidget()
@@ -147,6 +301,12 @@ class PortScannerWindow(QMainWindow):
         method_layout.addWidget(self.connect_check)
         method_layout.addWidget(self.syn_check)
         method_layout.addWidget(self.fin_check)
+
+        # ===== 新增：仅显示开放端口复选框 =====
+        self.open_only_check = QCheckBox("仅显示开放端口")
+        self.open_only_check.stateChanged.connect(self.apply_filter)
+        method_layout.addWidget(self.open_only_check)
+
         method_layout.addStretch()
 
         method_group.setLayout(method_layout)
@@ -183,7 +343,13 @@ class PortScannerWindow(QMainWindow):
         result_layout = QVBoxLayout()
 
         self.result_table = QTableWidget()
-        self.result_table.setColumnCount(6)
+        # ===== 修复：结果表格横向填满可用区域 =====
+        self.result_table.setSizePolicy(
+            QSizePolicy.Expanding,
+            QSizePolicy.Expanding,
+        )
+        # ===== 修改：从 6 列扩展为 9 列 =====
+        self.result_table.setColumnCount(9)
         self.result_table.setHorizontalHeaderLabels([
             "目标 IP",
             "主机状态",
@@ -191,16 +357,26 @@ class PortScannerWindow(QMainWindow):
             "端口号",
             "端口状态",
             "服务名称",
+            # ===== 新增列 =====
+            "详情",
+            "耗时",
+            "错误原因",
         ])
 
-        self.result_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        # ===== 调整：结果表格列宽比例 =====
+        header = self.result_table.horizontalHeader()
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(QHeaderView.Interactive)
+        # 仅详情列吸收窗口剩余宽度
+        header.setSectionResizeMode(6, QHeaderView.Stretch)  # 详情
         self.result_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.result_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.result_table.verticalHeader().setVisible(False)
         self.result_table.setShowGrid(True)
         self.result_table.setAlternatingRowColors(True)
 
-        result_layout.addWidget(self.result_table)
+        # ===== 修复：布局中添加 stretch 因子，让表格填满容器 =====
+        result_layout.addWidget(self.result_table, 1)
         result_group.setLayout(result_layout)
 
         # ================== 日志区 ==================
@@ -490,6 +666,20 @@ class PortScannerWindow(QMainWindow):
                 self.add_result_to_table(normalized)
                 self.results.append(normalized)
 
+            # ===== 新增：扫描完成后按端口号升序排序 =====
+            def _port_sort_key(r: dict) -> int:
+                p = r.get("port", "-")
+                try:
+                    return int(p)
+                except (TypeError, ValueError):
+                    return 999999
+
+            self.results.sort(key=_port_sort_key)
+            # 排序后重建表格显示
+            self.result_table.setRowCount(0)
+            for result in self.results:
+                self.add_result_row_from_cache(result)
+
             self.set_status("扫描完成", 100)
             self.log(f"[INFO] 扫描完成，共生成 {len(scan_results)} 条结果")
 
@@ -515,6 +705,10 @@ class PortScannerWindow(QMainWindow):
                     "port": "-",
                     "port_status": "-",
                     "service": "-",
+                    # ===== 新增字段 =====
+                    "response_flags": None,
+                    "error_message": None,
+                    "elapsed_ms": None,
                 })
                 continue
 
@@ -529,23 +723,44 @@ class PortScannerWindow(QMainWindow):
                     "port": port,
                     "port_status": port_status,
                     "service": service,
+                    # ===== 新增字段 =====
+                    "response_flags": "SA" if port_status == "开放" else "RA",
+                    "error_message": "模拟扫描 — 正常" if port_status == "开放" else "模拟扫描 — 端口关闭",
+                    "elapsed_ms": 12.34,
                 })
 
         return results
 
     def normalize_result(self, result: dict):
+        # ===== 新增：提取原始状态和额外字段 =====
+        raw_status = str(result.get("port_status", "未知"))
+        raw_port = result.get("port", "-")
+        response_flags = result.get("response_flags", None)
+        error_message = result.get("error_message", None)
+        elapsed_ms = result.get("elapsed_ms", None)
+
         return {
             "ip": result.get("ip", ""),
             "host_status": result.get("host_status", "未检测"),
             "method": result.get("method", "Unknown"),
-            "port": result.get("port", "-"),
-            "port_status": result.get("port_status", "未知"),
+            "port": raw_port,
+            "port_status": raw_status,
             "service": result.get("service", "Unknown"),
+            # ===== 新增字段 =====
+            "response_flags": response_flags,
+            "error_message": error_message,
+            "elapsed_ms": elapsed_ms,
+            "detail": build_detail_text(raw_port, raw_status, response_flags, error_message),
+            "error_reason": build_error_reason(raw_status, error_message),
         }
 
     def add_result_to_table(self, result: dict):
         row = self.result_table.rowCount()
         self.result_table.insertRow(row)
+
+        # ===== 新增：格式化耗时 =====
+        elapsed_ms = result.get("elapsed_ms")
+        elapsed_text = f"{elapsed_ms:.2f} ms" if isinstance(elapsed_ms, (int, float)) else "-"
 
         values = [
             result["ip"],
@@ -554,32 +769,61 @@ class PortScannerWindow(QMainWindow):
             str(result["port"]),
             result["port_status"],
             result["service"],
+            # ===== 新增列值 =====
+            result.get("detail", "-"),
+            elapsed_text,
+            result.get("error_reason", ""),
         ]
+
+        raw_status = result["port_status"]
+        raw_port = result.get("port", "-")
 
         for col, value in enumerate(values):
             item = QTableWidgetItem(value)
             item.setTextAlignment(Qt.AlignCenter)
 
-            # 第 4 列是端口状态，索引为 4
+            # ===== 第 4 列：端口状态 — 增加风险高亮 =====
             if col == 4:
-                if value == "开放":
-                    item.setForeground(QBrush(QColor("#15803d")))
-                    item.setBackground(QBrush(QColor("#dcfce7")))
-                elif value == "关闭":
-                    item.setForeground(QBrush(QColor("#dc2626")))
-                    item.setBackground(QBrush(QColor("#fee2e2")))
-                elif value == "过滤":
-                    item.setForeground(QBrush(QColor("#d97706")))
-                    item.setBackground(QBrush(QColor("#fef3c7")))
-                elif value == "错误":
+                risk_level = get_risk_level(raw_port, raw_status)
+
+                if risk_level == "high":
+                    # 高风险端口 → 红色
                     item.setForeground(QBrush(QColor("#991b1b")))
                     item.setBackground(QBrush(QColor("#fecaca")))
-                elif value == "未知":
+                elif risk_level == "medium":
+                    # 中风险端口 → 橙色
+                    item.setForeground(QBrush(QColor("#9a3412")))
+                    item.setBackground(QBrush(QColor("#fed7aa")))
+                elif raw_status in ("开放", "open"):
+                    item.setForeground(QBrush(QColor("#15803d")))
+                    item.setBackground(QBrush(QColor("#dcfce7")))
+                elif raw_status in ("关闭", "closed"):
+                    # ===== 新增：关闭端口用灰色 =====
+                    item.setForeground(QBrush(QColor("#6b7280")))
+                    item.setBackground(QBrush(QColor("#e5e7eb")))
+                elif raw_status in ("过滤", "filtered"):
+                    item.setForeground(QBrush(QColor("#d97706")))
+                    item.setBackground(QBrush(QColor("#fef3c7")))
+                # ===== 新增：open|filtered 黄色 =====
+                elif raw_status in ("开放或过滤", "open|filtered"):
+                    item.setForeground(QBrush(QColor("#854d0e")))
+                    item.setBackground(QBrush(QColor("#fef08a")))
+                elif raw_status in ("错误", "error"):
+                    # ===== 新增：错误用浅红色 =====
+                    item.setForeground(QBrush(QColor("#991b1b")))
+                    item.setBackground(QBrush(QColor("#fecaca")))
+                elif raw_status in ("未知", "unknown"):
                     item.setForeground(QBrush(QColor("#4b5563")))
                     item.setBackground(QBrush(QColor("#e5e7eb")))
-                elif value == "开放或过滤":
-                    item.setForeground(QBrush(QColor("#7c3aed")))
-                    item.setBackground(QBrush(QColor("#ede9fe")))
+
+            # ===== 新增：第 6 列（详情）左对齐以显示长文本 =====
+            if col == 6:
+                item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+
+            # ===== 新增：第 8 列（错误原因）错误高亮 =====
+            if col == 8 and value:
+                item.setForeground(QBrush(QColor("#991b1b")))
+                item.setBackground(QBrush(QColor("#fee2e2")))
 
             self.result_table.setItem(row, col, item)
 
@@ -588,6 +832,83 @@ class PortScannerWindow(QMainWindow):
         self.results.clear()
         self.log_output.clear()
         self.set_status("等待扫描", 0)
+        # ===== 新增：清空时重置筛选复选框 =====
+        self.open_only_check.setChecked(False)
+
+    # ===== 新增：仅显示开放端口筛选 =====
+    def apply_filter(self):
+        """根据 open_only_check 状态筛选表格显示，不重新扫描。"""
+        self.result_table.setRowCount(0)
+        for result in self.results:
+            if self.open_only_check.isChecked():
+                raw_status = str(result.get("port_status", ""))
+                if raw_status not in ("开放", "open"):
+                    continue
+            self.add_result_row_from_cache(result)
+
+    # ===== 新增：从缓存结果恢复表格行（用于筛选重建） =====
+    def add_result_row_from_cache(self, result: dict):
+        """从 self.results 缓存中重建表格行，不修改结果数据。"""
+        row = self.result_table.rowCount()
+        self.result_table.insertRow(row)
+
+        elapsed_ms = result.get("elapsed_ms")
+        elapsed_text = f"{elapsed_ms:.2f} ms" if isinstance(elapsed_ms, (int, float)) else "-"
+
+        values = [
+            result["ip"],
+            result["host_status"],
+            result["method"],
+            str(result["port"]),
+            result["port_status"],
+            result["service"],
+            result.get("detail", "-"),
+            elapsed_text,
+            result.get("error_reason", ""),
+        ]
+
+        raw_status = result["port_status"]
+        raw_port = result.get("port", "-")
+
+        for col, value in enumerate(values):
+            item = QTableWidgetItem(value)
+            item.setTextAlignment(Qt.AlignCenter)
+
+            if col == 4:
+                risk_level = get_risk_level(raw_port, raw_status)
+                if risk_level == "high":
+                    item.setForeground(QBrush(QColor("#991b1b")))
+                    item.setBackground(QBrush(QColor("#fecaca")))
+                elif risk_level == "medium":
+                    item.setForeground(QBrush(QColor("#9a3412")))
+                    item.setBackground(QBrush(QColor("#fed7aa")))
+                elif raw_status in ("开放", "open"):
+                    item.setForeground(QBrush(QColor("#15803d")))
+                    item.setBackground(QBrush(QColor("#dcfce7")))
+                elif raw_status in ("关闭", "closed"):
+                    item.setForeground(QBrush(QColor("#6b7280")))
+                    item.setBackground(QBrush(QColor("#e5e7eb")))
+                elif raw_status in ("过滤", "filtered"):
+                    item.setForeground(QBrush(QColor("#d97706")))
+                    item.setBackground(QBrush(QColor("#fef3c7")))
+                elif raw_status in ("开放或过滤", "open|filtered"):
+                    item.setForeground(QBrush(QColor("#854d0e")))
+                    item.setBackground(QBrush(QColor("#fef08a")))
+                elif raw_status in ("错误", "error"):
+                    item.setForeground(QBrush(QColor("#991b1b")))
+                    item.setBackground(QBrush(QColor("#fecaca")))
+                elif raw_status in ("未知", "unknown"):
+                    item.setForeground(QBrush(QColor("#4b5563")))
+                    item.setBackground(QBrush(QColor("#e5e7eb")))
+
+            if col == 6:
+                item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+
+            if col == 8 and value:
+                item.setForeground(QBrush(QColor("#991b1b")))
+                item.setBackground(QBrush(QColor("#fee2e2")))
+
+            self.result_table.setItem(row, col, item)
 
     def export_csv(self):
         if not self.results:
@@ -616,6 +937,10 @@ class PortScannerWindow(QMainWindow):
                         "port",
                         "port_status",
                         "service",
+                        # ===== 新增导出列 =====
+                        "detail",
+                        "elapsed_ms",
+                        "error_reason",
                     ]
                 )
                 writer.writeheader()
@@ -639,4 +964,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

@@ -3,7 +3,7 @@
 """
 公共数据模型模块
 
-定义三种 TCP 扫描器的统一返回数据结构。
+定义 TCP Connect / TCP SYN / TCP FIN 扫描器的统一返回数据结构。
 
 统一字段语义：
     host           — 目标主机 IP
@@ -11,10 +11,10 @@
     status         — 端口状态：
                       Connect: open / closed / filtered / error
                       SYN:     open / closed / filtered / error
-                      FIN:     打开(丢弃) / 关闭(RST) / 有连接(ACK) / filtered / unknown / error
-    response_flags — 目标返回的 TCP 标志位（如 SA / RA / A），无则为 None
+                      FIN:     closed / open|filtered / filtered / unreachable / unknown / error
+    response_flags — 目标返回的 TCP 标志位或 ICMP 类型/代码，无则为 None
     error_code     — 错误码，Connect 成功时为 0（即 connect()返回0），不适用时为 None
-    error_message  — 详细描述信息（使用 PPT 术语）
+    error_message  — 详细描述信息
 """
 
 from dataclasses import dataclass
@@ -86,3 +86,4 @@ class TCPFINScanResult:
     status: str
     response_flags: Optional[str]
     error_message: str
+
