@@ -18,6 +18,7 @@ if str(_PARENT_DIR) not in sys.path:
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QBrush
 from PySide6.QtWidgets import (
+    QToolTip,
     QSpacerItem,
     QSizePolicy,
     QApplication,
@@ -56,6 +57,42 @@ try:
 except Exception as e:
     ADAPTER_AVAILABLE = False
     ADAPTER_ERROR = str(e)
+
+
+# 尝试导入服务指纹识别模块（多种策略，确保在各种运行环境下都能加载）
+FINGERPRINT_AVAILABLE = False
+FINGERPRINT_ERROR = ""
+_scan_service = None
+
+# 策略 1：标准绝对导入
+try:
+    from service_fingerprint import scan_service as _scan_service
+    FINGERPRINT_AVAILABLE = True
+except Exception:
+    pass
+
+# 策略 2：通过 importlib 从文件路径直接加载（绕过相对导入问题）
+if not FINGERPRINT_AVAILABLE:
+    try:
+        import importlib.util as _importlib_util
+        _fp_path = Path(__file__).resolve().parent / "service_fingerprint.py"
+        _spec = _importlib_util.spec_from_file_location(
+            "_service_fingerprint", str(_fp_path),
+            submodule_search_locations=[],
+        )
+        if _spec is not None and _spec.loader is not None:
+            _fp_module = _importlib_util.module_from_spec(_spec)
+            _spec.loader.exec_module(_fp_module)
+            _scan_service = _fp_module.scan_service
+            FINGERPRINT_AVAILABLE = True
+            FINGERPRINT_ERROR = ""
+    except Exception as e:
+        FINGERPRINT_ERROR = str(e)
+
+# 将最终可用的 scan_service 绑定到模块级别名称
+if _scan_service is not None:
+    scan_service = _scan_service
+del _scan_service
 
 
 COMMON_SERVICES = {
@@ -339,6 +376,11 @@ class PortScannerWindow(QMainWindow):
         self.open_only_check = QCheckBox("仅显示开放端口")
         self.open_only_check.stateChanged.connect(self.apply_filter)
         method_layout.addWidget(self.open_only_check)
+
+        # ===== 新增：服务指纹识别复选框 =====
+        self.fingerprint_check = QCheckBox("服务指纹识别")
+        self.fingerprint_check.setToolTip("对开放端口主动发送探针以识别真实服务名称和版本")
+        method_layout.addWidget(self.fingerprint_check)
 
         method_layout.addStretch()
 
@@ -806,6 +848,10 @@ class PortScannerWindow(QMainWindow):
             for result in self.results:
                 self.add_result_row_from_cache(result)
 
+            # ===== 新增：指纹识别 =====
+            if self.fingerprint_check.isChecked():
+                self._run_fingerprinting(ip)
+
             self.set_status("扫描完成", 100)
             self.log(f"[INFO] 扫描完成，共生成 {len(scan_results)} 条结果")
 
@@ -944,6 +990,88 @@ class PortScannerWindow(QMainWindow):
 
             self.result_table.setItem(row, col, item)
 
+    def _run_fingerprinting(self, ip: str):
+        """对当前结果中所有开放端口执行服务指纹识别。"""
+        if not FINGERPRINT_AVAILABLE:
+            self.log(f"[WARNING] 指纹识别模块不可用：{FINGERPRINT_ERROR}")
+            return
+
+        # 收集所有开放端口（去重）
+        open_ports: set[int] = set()
+        for result in self.results:
+            raw_status = str(result.get("port_status", ""))
+            if raw_status in ("开放", "open"):
+                try:
+                    port = int(result["port"])
+                    open_ports.add(port)
+                except (TypeError, ValueError, KeyError):
+                    continue
+
+        if not open_ports:
+            self.log("[INFO] 没有开放端口，跳过指纹识别")
+            return
+
+        self.set_status(f"指纹识别中（{len(open_ports)} 个端口）", 85)
+        self.log(f"[INFO] 开始服务指纹识别，共 {len(open_ports)} 个开放端口")
+        for p in sorted(open_ports):
+            self.log(f"[FINGERPRINT] 待检测端口：{p}")
+
+        fingerprint_map: dict[int, tuple[str, str | None]] = {}
+        for idx, port in enumerate(sorted(open_ports)):
+            try:
+                fp_result = scan_service(ip, port, timeout=3.0)
+                if fp_result.service:
+                    fingerprint_map[port] = (fp_result.service, fp_result.version)
+                    detail = fp_result.version or "N/A"
+                    self.log(f"[FINGERPRINT] ✅ 端口 {port}: {fp_result.service} ({detail})")
+                else:
+                    self.log(f"[FINGERPRINT] ❌ 端口 {port}: {fp_result.detail}")
+            except Exception as e:
+                self.log(f"[FINGERPRINT] ⚠ 端口 {port} 指纹识别异常：{e}")
+
+            progress = 85 + int((idx + 1) / len(open_ports) * 10)
+            self.set_status(f"指纹识别中（{idx + 1}/{len(open_ports)}）", progress)
+            QApplication.processEvents()
+
+        if not fingerprint_map:
+            self.log("[INFO] 未识别到任何服务指纹")
+            return
+
+        # 更新 self.results 中的服务名称和详情
+        updated_count = 0
+        for result in self.results:
+            try:
+                port = int(result["port"])
+            except (TypeError, ValueError, KeyError):
+                continue
+            if port in fingerprint_map:
+                service, version = fingerprint_map[port]
+                old_service = result.get("service", "-")
+                new_service = f"{service} ({version})" if version else service
+                result["service"] = new_service
+                old_detail = result.get("detail", "")
+                result["detail"] = f"[指纹] {new_service} | {old_detail}" if old_detail else f"[指纹] {new_service}"
+                updated_count += 1
+                self.log(f"[FINGERPRINT] 更新表格：端口 {port} '{old_service}' → '{new_service}'")
+
+        self.log(f"[INFO] 指纹识别完成，共更新 {updated_count} 条结果记录")
+
+        # 重建表格显示（尊重仅显示开放端口筛选）
+        self.result_table.setRowCount(0)
+        use_filter = self.open_only_check.isChecked()
+        for result in self.results:
+            if use_filter:
+                raw_status = str(result.get("port_status", ""))
+                if raw_status not in ("开放", "open"):
+                    continue
+            self.add_result_row_from_cache(result)
+
+        # 关键：表格重建后重置 tooltip 状态，防止指纹循环中的
+        # processEvents() 造成的鼠标事件导致 tooltip 定时器进入不一致状态
+        QToolTip.hideText()
+        QApplication.processEvents()
+        self.result_table.viewport().update()
+
     def clear_results(self):
         self.result_table.setRowCount(0)
         self.results.clear()
@@ -1072,3 +1200,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

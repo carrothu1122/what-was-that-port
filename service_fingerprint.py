@@ -6,11 +6,18 @@ TCP 服务指纹识别模块。
 先确认端口可建立 TCP 连接，再按端口优先级发送探针并匹配响应。
 """
 
+import os
 import re
 import socket
 import ssl
+import sys as _sys
 from dataclasses import dataclass
 from typing import Iterable, List, Optional, Tuple
+
+# 确保当前目录在 sys.path 中，以便绝对导入 fingerprints 总能成功
+_dir = os.path.dirname(os.path.abspath(__file__))
+if _dir not in _sys.path:
+    _sys.path.insert(0, _dir)
 
 try:
     from .fingerprints import DEFAULT_PRIORITY, FINGERPRINTS, PORT_PRIORITY
@@ -137,3 +144,4 @@ def scan_service(host: str, port: int, timeout: float = 3.0) -> ServiceFingerpri
 def scan_services(host: str, ports: List[int], timeout: float = 3.0) -> List[ServiceFingerprintResult]:
     results = [scan_service(host, port, timeout=timeout) for port in ports]
     return sorted(results, key=lambda result: result.port)
+
