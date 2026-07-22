@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QAbstractItemView,
     QCheckBox,
+    QDialog,
     QFileDialog,
     QGridLayout,
     QGroupBox,
@@ -40,7 +41,12 @@ from PySide6.QtWidgets import (
 # 尝试导入真实扫描接口
 # 如果 scanner_adapter.py 有问题，程序不会直接崩溃，而是使用模拟扫描
 try:
-    from scanner_adapter import real_scan
+    from scanner_adapter import (
+        is_pkexec_available,
+        is_running_as_root,
+        needs_privileged_scan,
+        real_scan,
+    )
     ADAPTER_AVAILABLE = True
 except Exception as e:
     ADAPTER_AVAILABLE = False
@@ -663,12 +669,104 @@ class PortScannerWindow(QMainWindow):
 
         return ip, start_port, end_port, methods
 
+    def resolve_privileged_scan_choice(self, methods: list[str]) -> tuple[list[str], bool, str] | None:
+        """处理高级扫描授权选择。返回：(最终扫描方式, 是否使用 pkexec worker, 日志说明)。"""
+        if not ADAPTER_AVAILABLE or not needs_privileged_scan(methods) or is_running_as_root():
+            return methods, False, ""
+
+        advanced_methods = [method for method in methods if method in {"TCP SYN", "TCP FIN", "UDP"}]
+        ordinary_methods = [method for method in methods if method not in {"TCP SYN", "TCP FIN", "UDP"}]
+
+        pkexec_available = is_pkexec_available()
+        dialog = QDialog(self)
+        dialog.setWindowTitle("高级扫描需要授权")
+        dialog.setModal(True)
+        dialog.setMinimumWidth(560)
+        dialog.choice = "cancel"
+
+        layout = QVBoxLayout(dialog)
+
+        title = QLabel("TCP SYN / TCP FIN / UDP 需要 sudo/root 权限")
+        title.setStyleSheet("font-size: 16px; font-weight: bold; color: #111827;")
+        layout.addWidget(title)
+
+        message = QLabel(
+            "是否授权运行本次高级扫描？\n"
+            f"需要授权的扫描方式：{', '.join(advanced_methods)}\n"
+            "GUI 会保持普通权限，只通过 pkexec 启动一次后台扫描子进程。"
+        )
+        if not pkexec_available:
+            message.setText(
+                "当前系统未找到 pkexec，无法启动授权扫描子进程。\n"
+                f"需要授权的扫描方式：{', '.join(advanced_methods)}\n"
+                "可以仅运行 TCP Connect / ICMP 等普通扫描。"
+            )
+        message.setWordWrap(True)
+        message.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        message.setStyleSheet("font-size: 14px; color: #374151; line-height: 1.4;")
+        layout.addWidget(message)
+
+        button_layout = QHBoxLayout()
+
+        authorize_button = QPushButton("是，授权并扫描")
+        authorize_button.setEnabled(pkexec_available)
+        authorize_button.setMinimumHeight(36)
+        authorize_button.setStyleSheet("background-color: #16a34a; color: white;")
+
+        ordinary_button = QPushButton("否，仅运行普通扫描")
+        ordinary_button.setMinimumHeight(36)
+        ordinary_button.setStyleSheet("background-color: #2563eb; color: white;")
+
+        cancel_button = QPushButton("取消")
+        cancel_button.setMinimumHeight(36)
+        cancel_button.setStyleSheet("background-color: #64748b; color: white;")
+
+        def choose_authorize():
+            dialog.choice = "authorize"
+            dialog.accept()
+
+        def choose_ordinary():
+            dialog.choice = "ordinary"
+            dialog.accept()
+
+        def choose_cancel():
+            dialog.choice = "cancel"
+            dialog.reject()
+
+        authorize_button.clicked.connect(choose_authorize)
+        ordinary_button.clicked.connect(choose_ordinary)
+        cancel_button.clicked.connect(choose_cancel)
+
+        if pkexec_available:
+            button_layout.addWidget(authorize_button)
+        button_layout.addWidget(ordinary_button)
+        button_layout.addWidget(cancel_button)
+        layout.addLayout(button_layout)
+
+        dialog.exec()
+
+        if dialog.choice == "authorize":
+            return methods, True, "用户选择授权，高级扫描将通过 pkexec worker 执行"
+
+        if dialog.choice == "ordinary":
+            if not ordinary_methods:
+                ordinary_methods = ["TCP Connect"]
+            return ordinary_methods, False, "用户选择仅运行普通扫描，已跳过 TCP SYN / TCP FIN / UDP"
+
+        return None
+
     def start_scan(self):
         try:
             ip, start_port, end_port, methods = self.validate_input()
         except ValueError as e:
             self.show_message("输入错误", str(e), "warning")
             return
+
+        privilege_choice = self.resolve_privileged_scan_choice(methods)
+        if privilege_choice is None:
+            return
+
+        methods, use_privileged_worker, privilege_note = privilege_choice
 
         self.start_button.setEnabled(False)
         self.set_status("正在扫描", 10)
@@ -677,11 +775,19 @@ class PortScannerWindow(QMainWindow):
         self.log(f"[INFO] 开始扫描目标：{ip}")
         self.log(f"[INFO] 端口范围：{start_port}-{end_port}")
         self.log(f"[INFO] 扫描方式：{', '.join(methods)}")
+        if privilege_note:
+            self.log(f"[INFO] {privilege_note}")
 
         try:
             if ADAPTER_AVAILABLE:
                 self.log("[INFO] 当前使用真实扫描模块")
-                scan_results = real_scan(ip, start_port, end_port, methods)
+                scan_results = real_scan(
+                    ip,
+                    start_port,
+                    end_port,
+                    methods,
+                    use_privileged_worker=use_privileged_worker,
+                )
             else:
                 self.log("[WARNING] 当前使用模拟扫描模块")
                 scan_results = self.mock_scan(ip, start_port, end_port, methods)
