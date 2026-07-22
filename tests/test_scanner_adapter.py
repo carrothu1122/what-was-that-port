@@ -24,6 +24,9 @@ def test_make_row_and_error_row_have_stable_frontend_shape():
         "port": 80,
         "port_status": "开放",
         "service": "HTTP",
+        "response_flags": None,
+        "error_message": None,
+        "elapsed_ms": None,
     }
 
     assert make_error_row("192.0.2.1", "未知", "TCP SYN", "需要 root") == {
@@ -33,4 +36,21 @@ def test_make_row_and_error_row_have_stable_frontend_shape():
         "port": "-",
         "port_status": "错误：需要 root",
         "service": "-",
+        "response_flags": None,
+        "error_message": "需要 root",
+        "elapsed_ms": None,
+    }
+
+
+def test_make_row_handles_udp_method_and_common_service():
+    assert make_row("192.0.2.1", "未检测", "UDP", 53, "开放或被过滤") == {
+        "ip": "192.0.2.1",
+        "host_status": "未检测",
+        "method": "UDP",
+        "port": 53,
+        "port_status": "开放或被过滤",
+        "service": "DNS",
+        "response_flags": None,
+        "error_message": None,
+        "elapsed_ms": None,
     }

@@ -8,14 +8,14 @@ tcp_scanner package
 """
 
 try:
-    from .models import TCPConnectScanResult, TCPFINScanResult, TCPSYNScanResult
+    from .models import TCPConnectScanResult, TCPFINScanResult, TCPSYNScanResult, UDPScanResult
     from .service_fingerprint import ServiceFingerprintResult, scan_service, scan_services
     from .tcp_connect_scanner import TCPConnectScanner
     from .utils import parse_ports, validate_target
 except ImportError:
     # pytest may import this root-level __init__.py as a standalone module when
     # the project directory is not installed as an importable package.
-    from models import TCPConnectScanResult, TCPFINScanResult, TCPSYNScanResult
+    from models import TCPConnectScanResult, TCPFINScanResult, TCPSYNScanResult, UDPScanResult
     from service_fingerprint import ServiceFingerprintResult, scan_service, scan_services
     from tcp_connect_scanner import TCPConnectScanner
     from utils import parse_ports, validate_target
@@ -25,6 +25,7 @@ __all__ = [
     "TCPConnectScanResult",
     "TCPSYNScanResult",
     "TCPFINScanResult",
+    "UDPScanResult",
     "ServiceFingerprintResult",
     "parse_ports",
     "scan_service",

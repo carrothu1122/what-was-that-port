@@ -29,7 +29,7 @@ from typing import Dict, List
 try:
     from scapy.all import IP, TCP, ICMP, sr1, conf
     _SCAPY_IMPORT_ERROR = None
-except ImportError as exc:
+except Exception as exc:
     # Keep pure helpers importable and testable even when Scapy is not installed.
     # Actual raw-packet scanning will report a structured error from fin_scan_port.
     IP = None

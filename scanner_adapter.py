@@ -3,7 +3,7 @@ scanner_adapter.py
 
 作用：
 1. 作为 GUI 和底层扫描模块之间的适配层；
-2. 统一把 ICMP、TCP Connect、TCP SYN、TCP FIN 的结果转换成界面表格需要的 list[dict]；
+2. 统一把 ICMP、TCP Connect、TCP SYN、TCP FIN、UDP 的结果转换成界面表格需要的 list[dict]；
 3. 避免因为某个扫描模块导入失败导致整个图形界面直接崩溃。
 """
 
@@ -211,6 +211,37 @@ def scan_tcp_fin(ip: str, ports: list[int], host_status: str) -> list[dict]:
     return rows
 
 
+def scan_udp(ip: str, ports: list[int], host_status: str) -> list[dict]:
+    """调用 UDP 扫描模块。UDP 通常需要 sudo/root 权限才能接收 ICMP 响应。"""
+    rows: list[dict] = []
+    try:
+        from udp_scanner import scan_ports
+
+        scan_results = scan_ports(
+            target=ip,
+            ports=ports,
+            timeout=2.0,
+            retries=1,
+            max_workers=50,
+        )
+
+        for r in scan_results:
+            rows.append(make_row(
+                ip=r.host,
+                host_status=host_status,
+                method="UDP",
+                port=r.port,
+                port_status=convert_status(r.status),
+                response_flags=getattr(r, "response_flags", None),
+                error_message=getattr(r, "error_message", None),
+            ))
+
+    except Exception as exc:
+        rows.append(make_error_row(ip, host_status, "UDP", str(exc)))
+
+    return rows
+
+
 def real_scan(ip: str, start_port: int, end_port: int, methods: list[str]) -> list[dict]:
     """
     GUI 统一调用入口。
@@ -248,5 +279,8 @@ def real_scan(ip: str, start_port: int, end_port: int, methods: list[str]) -> li
 
     if "TCP FIN" in methods:
         rows.extend(scan_tcp_fin(ip, ports, host_status))
+
+    if "UDP" in methods:
+        rows.extend(scan_udp(ip, ports, host_status))
 
     return rows

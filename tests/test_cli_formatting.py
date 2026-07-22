@@ -44,6 +44,25 @@ def test_scan_results_to_frontend_records_maps_method_and_status_language():
     ]
 
 
+def test_scan_results_to_frontend_records_maps_udp_method():
+    results = [
+        SimpleNamespace(host="192.0.2.1", port=53, status="open|filtered"),
+    ]
+
+    records = _scan_results_to_frontend_records(results, method="udp", lang="zh")
+
+    assert records == [
+        {
+            "ip": "192.0.2.1",
+            "host_status": "未知",
+            "method": "UDP",
+            "port": 53,
+            "port_status": "开放或被过滤",
+            "service": None,
+        },
+    ]
+
+
 def test_fingerprint_records_preserve_unknown_service_as_none():
     results = [
         SimpleNamespace(host="192.0.2.1", port=443, open=True, service="https"),

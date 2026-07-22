@@ -27,6 +27,7 @@ METHOD_LABELS = {
     "connect": "TCP Connect",
     "syn": "TCP SYN",
     "fin": "TCP FIN",
+    "udp": "UDP",
     "fingerprint": "TCP Connect",
 }
 
@@ -225,6 +226,19 @@ def scan_command(args: argparse.Namespace) -> int:
             timeout=args.timeout,
             retries=args.retries,
         )
+    elif args.mode == "udp":
+        try:
+            from .udp_scanner import scan_ports as udp_scan_ports
+        except ImportError:
+            from udp_scanner import scan_ports as udp_scan_ports
+
+        results = udp_scan_ports(
+            target=target,
+            ports=args.ports,
+            timeout=args.timeout,
+            retries=args.retries,
+            max_workers=args.workers,
+        )
     else:
         raise ValueError(f"不支持的扫描模式：{args.mode}")
 
@@ -273,13 +287,13 @@ def build_parser() -> argparse.ArgumentParser:
     scan_parser.add_argument(
         "-m",
         "--mode",
-        choices=["connect", "syn", "fin"],
+        choices=["connect", "syn", "fin", "udp"],
         default="connect",
         help="扫描方式，默认 connect",
     )
     scan_parser.add_argument("-t", "--timeout", type=float, default=1.0, help="超时时间，默认 1 秒")
-    scan_parser.add_argument("-w", "--workers", type=int, default=50, help="并发线程数，仅 connect/syn 有效")
-    scan_parser.add_argument("-r", "--retries", type=int, default=1, help="重试次数，仅 fin 有效")
+    scan_parser.add_argument("-w", "--workers", type=int, default=50, help="并发线程数，仅 connect/syn/udp 有效")
+    scan_parser.add_argument("-r", "--retries", type=int, default=1, help="重试次数，仅 fin/udp 有效")
     scan_parser.add_argument("--json", action="store_true", help="输出前端接入用 JSON")
     scan_parser.add_argument("--lang", choices=["en", "zh"], default="en", help="JSON 状态语言，默认英文")
     scan_parser.add_argument("--export-results", action="store_true", help="执行后将结果导出到目录")

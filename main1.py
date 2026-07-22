@@ -1,6 +1,7 @@
 import csv
 import ipaddress
 import sys
+import textwrap
 from pathlib import Path
 
 # 确保 tcp_scanner 包的父目录在 sys.path 中，
@@ -152,6 +153,9 @@ def build_detail_text(
         "关闭": "端口拒绝连接（RST）",
         "过滤": "防火墙或过滤规则阻止探测",
         "开放或过滤": "端口可能开放或被防火墙过滤",
+        "开放或被过滤": "端口可能开放或被防火墙过滤",
+        "不可达": "目标网络、主机或协议不可达",
+        "有连接": "目标返回 ACK，可能存在活动连接或中间设备响应",
         "错误": "扫描过程发生异常",
         "未知": "无法判断端口状态",
     }
@@ -184,6 +188,22 @@ def build_error_reason(status: str, error_message: str | None) -> str:
         return "网络异常"
 
     return ""
+
+
+def wrap_long_message(text: str, width: int = 64) -> str:
+    """Break long path-like text so QMessageBox can display it fully."""
+    wrapped_lines = []
+    for line in str(text).splitlines():
+        if not line:
+            wrapped_lines.append("")
+            continue
+        wrapped_lines.extend(textwrap.wrap(
+            line,
+            width=width,
+            break_long_words=True,
+            break_on_hyphens=False,
+        ))
+    return "\n".join(wrapped_lines)
 
 
 class PortScannerWindow(QMainWindow):
@@ -245,7 +265,7 @@ class PortScannerWindow(QMainWindow):
             }
         """)
 
-        subtitle_label = QLabel("支持 ICMP 主机探测、TCP Connect、TCP SYN、TCP FIN 扫描与结果导出")
+        subtitle_label = QLabel("支持 ICMP 主机探测、TCP Connect、TCP SYN、TCP FIN、UDP 扫描与结果导出")
         subtitle_label.setAlignment(Qt.AlignCenter)
         subtitle_label.setStyleSheet("""
             QLabel {
@@ -293,6 +313,7 @@ class PortScannerWindow(QMainWindow):
         self.connect_check = QCheckBox("TCP Connect")
         self.syn_check = QCheckBox("TCP SYN")
         self.fin_check = QCheckBox("TCP FIN")
+        self.udp_check = QCheckBox("UDP")
 
         self.icmp_check.setChecked(True)
         self.connect_check.setChecked(True)
@@ -301,6 +322,7 @@ class PortScannerWindow(QMainWindow):
         method_layout.addWidget(self.connect_check)
         method_layout.addWidget(self.syn_check)
         method_layout.addWidget(self.fin_check)
+        method_layout.addWidget(self.udp_check)
 
         # ===== 新增：仅显示开放端口复选框 =====
         self.open_only_check = QCheckBox("仅显示开放端口")
@@ -545,21 +567,24 @@ class PortScannerWindow(QMainWindow):
             box.setIcon(QMessageBox.NoIcon)
 
         box.setWindowTitle(title)
-        box.setText(text)
+        box.setText(wrap_long_message(text))
+        box.setTextFormat(Qt.PlainText)
+        box.setTextInteractionFlags(Qt.TextSelectableByMouse)
         box.setStandardButtons(QMessageBox.Ok)
         box.setDefaultButton(QMessageBox.Ok)
 
     # 关键：强制弹窗变宽，避免中文显示不完整
-        box.setMinimumWidth(460)
+        box.setMinimumWidth(640)
         box.setStyleSheet("""
             QMessageBox {
                 background-color: #ffffff;
             }
 
             QLabel {
-                min-width: 360px;
+                min-width: 520px;
                 font-size: 14px;
                 color: #111827;
+                qproperty-wordWrap: true;
             }
 
             QPushButton {
@@ -578,7 +603,7 @@ class PortScannerWindow(QMainWindow):
 
         # 再加一个水平撑开项，进一步防止 Linux 下宽度不足
         layout = box.layout()
-        spacer = QSpacerItem(420, 0, QSizePolicy.Minimum, QSizePolicy.Expanding)
+        spacer = QSpacerItem(600, 0, QSizePolicy.Minimum, QSizePolicy.Expanding)
         layout.addItem(spacer, layout.rowCount(), 0, 1, layout.columnCount())
 
         box.exec()
@@ -601,6 +626,8 @@ class PortScannerWindow(QMainWindow):
             methods.append("TCP SYN")
         if self.fin_check.isChecked():
             methods.append("TCP FIN")
+        if self.udp_check.isChecked():
+            methods.append("UDP")
 
         return methods
 
@@ -805,9 +832,15 @@ class PortScannerWindow(QMainWindow):
                     item.setForeground(QBrush(QColor("#d97706")))
                     item.setBackground(QBrush(QColor("#fef3c7")))
                 # ===== 新增：open|filtered 黄色 =====
-                elif raw_status in ("开放或过滤", "open|filtered"):
+                elif raw_status in ("开放或过滤", "开放或被过滤", "open|filtered"):
                     item.setForeground(QBrush(QColor("#854d0e")))
                     item.setBackground(QBrush(QColor("#fef08a")))
+                elif raw_status in ("不可达", "unreachable"):
+                    item.setForeground(QBrush(QColor("#4338ca")))
+                    item.setBackground(QBrush(QColor("#e0e7ff")))
+                elif raw_status in ("有连接",):
+                    item.setForeground(QBrush(QColor("#0369a1")))
+                    item.setBackground(QBrush(QColor("#e0f2fe")))
                 elif raw_status in ("错误", "error"):
                     # ===== 新增：错误用浅红色 =====
                     item.setForeground(QBrush(QColor("#991b1b")))
@@ -891,9 +924,15 @@ class PortScannerWindow(QMainWindow):
                 elif raw_status in ("过滤", "filtered"):
                     item.setForeground(QBrush(QColor("#d97706")))
                     item.setBackground(QBrush(QColor("#fef3c7")))
-                elif raw_status in ("开放或过滤", "open|filtered"):
+                elif raw_status in ("开放或过滤", "开放或被过滤", "open|filtered"):
                     item.setForeground(QBrush(QColor("#854d0e")))
                     item.setBackground(QBrush(QColor("#fef08a")))
+                elif raw_status in ("不可达", "unreachable"):
+                    item.setForeground(QBrush(QColor("#4338ca")))
+                    item.setBackground(QBrush(QColor("#e0e7ff")))
+                elif raw_status in ("有连接",):
+                    item.setForeground(QBrush(QColor("#0369a1")))
+                    item.setBackground(QBrush(QColor("#e0f2fe")))
                 elif raw_status in ("错误", "error"):
                     item.setForeground(QBrush(QColor("#991b1b")))
                     item.setBackground(QBrush(QColor("#fecaca")))
@@ -946,12 +985,12 @@ class PortScannerWindow(QMainWindow):
                 writer.writeheader()
                 writer.writerows(self.results)
 
-            self.show_message("导出成功", f"扫描结果已导出到：\n{file_path}", "information")
+            self.show_message("导出成功", f"扫描结果已成功导出。\n\n文件位置：\n{file_path}", "information")
             self.log(f"[INFO] 扫描结果已导出：{file_path}")
 
         except Exception as e:
             
-            self.show_message("失败", "no 扫描结果", "information")
+            self.show_message("导出失败", f"扫描结果导出失败：\n{e}", "critical")
             self.log(f"[ERROR] 导出失败：{e}")
 
 
