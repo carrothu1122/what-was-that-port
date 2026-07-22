@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=What Was That Port
+Comment=GUI port scanner
+Exec=what-was-that-port
+Icon=network-workgroup
+Terminal=false
+Categories=Network;Security;

@@ -12,12 +12,13 @@
 - **服务指纹识别**：对开放端口发送协议探针（HTTP/HTTPS/FTP/SMTP/MySQL/Redis 等）并匹配响应，推测服务名称与版本信息。
 - **结果导出**：CLI 支持导出为 TXT/JSON，GUI 支持导出为 CSV。
 - **统一 CLI 入口**：`python -m tcp_scanner` 提供 `scan` / `fingerprint` / `ping` 子命令，支持中英文输出。
-- **图形化界面（GUI）**：基于 PySide6，提供目标输入、端口范围、扫描方式勾选（ICMP/Connect/SYN/FIN/UDP）、结果表格（按状态着色）、运行日志、进度条与 CSV 导出；当底层扫描模块不可用时自动降级为模拟扫描，避免直接崩溃。
+- **图形化界面（GUI）**：基于 PySide6，提供目标输入、端口范围、扫描方式勾选（ICMP/Connect/SYN/FIN/UDP）、结果表格（按状态着色）、运行日志、进度条与 CSV 导出；高级扫描会提示授权，并只提权后台 worker，GUI 本身保持普通权限运行。
 
 ## 环境要求
 
 - Python 3.10+
-- Linux/macOS 下 TCP SYN、TCP FIN、UDP、ICMP 探测需要 root/sudo 权限（原始套接字/抓包权限）
+- Linux 下 TCP SYN、TCP FIN、UDP 需要原始套接字权限；GUI 会通过 `pkexec` 启动一次性后台 worker。
+- Windows 下普通 TCP Connect 扫描可直接运行；TCP SYN、TCP FIN、UDP 需要管理员权限，且通常需要安装 Npcap 才能让 Scapy 使用底层抓包/发包能力。
 
 ## 安装
 
@@ -27,40 +28,73 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
+开发安装也可以使用：
+
+```bash
+pip install -e .
+```
+
 ## 使用方式
 
 ### 命令行（CLI）
 
 ```bash
+# 开发安装后可使用统一 CLI
+what-was-that-port-cli scan 127.0.0.1 -p 22,80,443 --mode connect
+
 # TCP Connect 扫描（默认模式，无需 sudo）
-python -m tcp_scanner scan 127.0.0.1 -p 22,80,443 --mode connect
+python cli.py scan 127.0.0.1 -p 22,80,443 --mode connect
 
 # TCP SYN 扫描（需要 sudo）
-sudo python -m tcp_scanner scan 127.0.0.1 -p 1-1024 --mode syn
+sudo python cli.py scan 127.0.0.1 -p 1-1024 --mode syn
 
 # TCP FIN 扫描（需要 sudo）
-sudo python -m tcp_scanner scan 127.0.0.1 -p 21,22,80 --mode fin
+sudo python cli.py scan 127.0.0.1 -p 21,22,80 --mode fin
 
 # UDP 扫描（需要 sudo；无响应会显示 open|filtered）
-sudo python -m tcp_scanner scan 127.0.0.1 -p 53,123,161 --mode udp
+sudo python cli.py scan 127.0.0.1 -p 53,123,161 --mode udp
 
 # 服务指纹识别
-python -m tcp_scanner fingerprint 127.0.0.1 -p 22,80,443
+python cli.py fingerprint 127.0.0.1 -p 22,80,443
 
 # ICMP 主机存活探测
-python -m tcp_scanner ping 127.0.0.1
+python cli.py ping 127.0.0.1
 
 # 输出前端可用的 JSON，并导出结果
-python -m tcp_scanner scan 127.0.0.1 -p 1-1024 --mode connect --json --export-results --export-dir ./output
+python cli.py scan 127.0.0.1 -p 1-1024 --mode connect --json --export-results --export-dir ./output
 ```
 
 ### 图形界面（GUI）
 
 ```bash
+# 开发安装后
+what-was-that-port
+
+# 或直接从源码运行
 python main1.py
 ```
 
-界面支持：目标 IP 输入、起止端口设置、勾选 ICMP/TCP Connect/TCP SYN/TCP FIN/UDP、开始扫描、清空结果、导出 CSV。若某些扫描依赖模块导入失败（例如 Scapy 未安装或权限不足），会自动切换为模拟扫描并在日志区提示原因。
+界面支持：目标 IP 输入、起止端口设置、勾选 ICMP/TCP Connect/TCP SYN/TCP FIN/UDP、开始扫描、清空结果、导出 CSV。勾选 TCP SYN、TCP FIN 或 UDP 时，GUI 会提示是否授权本次高级扫描；用户也可以选择只运行 TCP Connect / ICMP 等普通扫描。
+
+高级扫描权限结构：
+
+```
+main1.py 普通权限 GUI
+        |
+        | request/result JSON 文件
+        v
+privileged_worker.py 授权子进程
+        |
+        +-- TCP SYN
+        +-- TCP FIN
+        +-- UDP
+```
+
+打包相关说明见 `packaging/README.md`。当前项目已经提供开发安装入口：
+
+- `what-was-that-port`
+- `what-was-that-port-cli`
+- `what-was-that-port-worker`
 
 ## 项目结构
 
@@ -69,6 +103,8 @@ python main1.py
 ├── cli.py                    # 统一命令行入口（scan / fingerprint / ping）
 ├── main1.py                   # PySide6 图形界面
 ├── scanner_adapter.py          # GUI 与底层扫描模块之间的适配层
+├── privilege_adapter.py        # Linux pkexec / Windows UAC 权限适配层
+├── privileged_worker.py        # 高级扫描授权后台 worker
 ├── models.py                   # 各扫描器的统一结果数据结构
 ├── utils.py                    # IP/端口校验与解析等公共工具函数
 ├── host_discovery.py           # ICMP 主机存活探测

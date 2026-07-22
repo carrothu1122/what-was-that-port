@@ -2,8 +2,9 @@
 # -*- coding: utf-8 -*-
 """Privileged JSON worker for raw-socket scans.
 
-This process is intended to be launched by pkexec from the GUI. It reads one
-JSON request from stdin and writes one JSON response to stdout.
+This process is launched by a platform-specific elevation helper. It reads a
+request JSON file and writes a result JSON file so Linux pkexec and Windows UAC
+can share the same worker protocol.
 """
 
 import json
@@ -16,11 +17,20 @@ PROJECT_DIR = Path(__file__).resolve().parent
 if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
-from scanner_adapter import get_advanced_methods, scan_privileged_methods_direct
+from privilege_adapter import get_advanced_methods
+from scanner_adapter import scan_privileged_methods_direct
 
 
-def _error(message: str) -> int:
-    print(json.dumps({"ok": False, "error": message}, ensure_ascii=False))
+def _write_result(path: Path, payload: dict[str, Any]) -> None:
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+
+def _error(result_path: Path | None, message: str) -> int:
+    payload = {"ok": False, "error": message}
+    if result_path is None:
+        print(json.dumps(payload, ensure_ascii=False))
+    else:
+        _write_result(result_path, payload)
     return 1
 
 
@@ -60,14 +70,20 @@ def _validate_request(payload: Any) -> tuple[str, list[int], list[str], str]:
 
 
 def main() -> int:
+    result_path: Path | None = None
     try:
-        payload = json.load(sys.stdin)
+        if len(sys.argv) != 3:
+            raise ValueError("用法：privileged_worker.py <request.json> <result.json>")
+
+        request_path = Path(sys.argv[1])
+        result_path = Path(sys.argv[2])
+        payload = json.loads(request_path.read_text(encoding="utf-8"))
         ip, ports, methods, host_status = _validate_request(payload)
         rows = scan_privileged_methods_direct(ip, ports, methods, host_status)
     except Exception as exc:
-        return _error(str(exc))
+        return _error(result_path, str(exc))
 
-    print(json.dumps({"ok": True, "rows": rows}, ensure_ascii=False))
+    _write_result(result_path, {"ok": True, "rows": rows})
     return 0
 
 

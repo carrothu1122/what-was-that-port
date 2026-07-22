@@ -1,5 +1,4 @@
 import json
-from types import SimpleNamespace
 
 import scanner_adapter
 from scanner_adapter import (
@@ -78,15 +77,13 @@ def test_make_row_handles_udp_method_and_common_service():
 
 def test_pkexec_worker_rows_are_returned(monkeypatch):
     row = make_row("192.0.2.1", "在线", "UDP", 53, "开放", response_flags="UDP")
-    completed = SimpleNamespace(
-        returncode=0,
-        stdout=json.dumps({"ok": True, "rows": [row]}, ensure_ascii=False),
-        stderr="",
-    )
 
-    monkeypatch.setattr(scanner_adapter, "is_running_as_root", lambda: False)
-    monkeypatch.setattr(scanner_adapter, "is_pkexec_available", lambda: True)
-    monkeypatch.setattr(scanner_adapter.subprocess, "run", lambda *args, **kwargs: completed)
+    monkeypatch.setattr(scanner_adapter, "is_running_as_admin", lambda: False)
+    monkeypatch.setattr(
+        scanner_adapter,
+        "run_privileged_worker",
+        lambda request, timeout: (json.loads(json.dumps({"ok": True, "rows": [row]}, ensure_ascii=False)), ""),
+    )
 
     assert scan_privileged_methods_with_pkexec(
         "192.0.2.1",

@@ -47,10 +47,14 @@ from PySide6.QtWidgets import (
 # 尝试导入真实扫描接口
 # 如果 scanner_adapter.py 有问题，程序不会直接崩溃，而是使用模拟扫描
 try:
-    from scanner_adapter import (
-        is_pkexec_available,
-        is_running_as_root,
+    from privilege_adapter import (
+        can_launch_privileged_worker,
+        advanced_scan_environment_warning,
+        current_platform,
+        is_running_as_admin,
         needs_privileged_scan,
+    )
+    from scanner_adapter import (
         real_scan,
     )
     ADAPTER_AVAILABLE = True
@@ -705,14 +709,16 @@ class PortScannerWindow(QMainWindow):
         return ip, start_port, end_port, methods
 
     def resolve_privileged_scan_choice(self, methods: list[str]) -> tuple[list[str], bool, str] | None:
-        """处理高级扫描授权选择。返回：(最终扫描方式, 是否使用 pkexec worker, 日志说明)。"""
-        if not ADAPTER_AVAILABLE or not needs_privileged_scan(methods) or is_running_as_root():
+        """处理高级扫描授权选择。返回：(最终扫描方式, 是否使用授权 worker, 日志说明)。"""
+        if not ADAPTER_AVAILABLE or not needs_privileged_scan(methods) or is_running_as_admin():
             return methods, False, ""
 
         advanced_methods = [method for method in methods if method in {"TCP SYN", "TCP FIN", "UDP"}]
         ordinary_methods = [method for method in methods if method not in {"TCP SYN", "TCP FIN", "UDP"}]
 
-        pkexec_available = is_pkexec_available()
+        worker_available = can_launch_privileged_worker()
+        platform_name = current_platform()
+        dependency_warning = advanced_scan_environment_warning(methods)
         dialog = QDialog(self)
         dialog.setWindowTitle("高级扫描需要授权")
         dialog.setModal(True)
@@ -728,11 +734,13 @@ class PortScannerWindow(QMainWindow):
         message = QLabel(
             "是否授权运行本次高级扫描？\n"
             f"需要授权的扫描方式：{', '.join(advanced_methods)}\n"
-            "GUI 会保持普通权限，只通过 pkexec 启动一次后台扫描子进程。"
+            "GUI 会保持普通权限，只启动一次授权后台扫描子进程。"
         )
-        if not pkexec_available:
+        if dependency_warning:
+            message.setText(f"{message.text()}\n\n注意：{dependency_warning}")
+        if not worker_available:
             message.setText(
-                "当前系统未找到 pkexec，无法启动授权扫描子进程。\n"
+                "当前系统不支持启动授权扫描子进程。\n"
                 f"需要授权的扫描方式：{', '.join(advanced_methods)}\n"
                 "可以仅运行 TCP Connect / ICMP 等普通扫描。"
             )
@@ -744,9 +752,11 @@ class PortScannerWindow(QMainWindow):
         button_layout = QHBoxLayout()
 
         authorize_button = QPushButton("是，授权并扫描")
-        authorize_button.setEnabled(pkexec_available)
+        authorize_button.setEnabled(worker_available)
         authorize_button.setMinimumHeight(36)
         authorize_button.setStyleSheet("background-color: #16a34a; color: white;")
+        if not worker_available:
+            authorize_button.setToolTip("当前平台未检测到可用的提权方式")
 
         ordinary_button = QPushButton("否，仅运行普通扫描")
         ordinary_button.setMinimumHeight(36)
@@ -772,8 +782,7 @@ class PortScannerWindow(QMainWindow):
         ordinary_button.clicked.connect(choose_ordinary)
         cancel_button.clicked.connect(choose_cancel)
 
-        if pkexec_available:
-            button_layout.addWidget(authorize_button)
+        button_layout.addWidget(authorize_button)
         button_layout.addWidget(ordinary_button)
         button_layout.addWidget(cancel_button)
         layout.addLayout(button_layout)
@@ -781,7 +790,13 @@ class PortScannerWindow(QMainWindow):
         dialog.exec()
 
         if dialog.choice == "authorize":
-            return methods, True, "用户选择授权，高级扫描将通过 pkexec worker 执行"
+            if platform_name == "windows":
+                launcher = "Windows UAC worker"
+            elif platform_name == "linux":
+                launcher = "pkexec worker"
+            else:
+                launcher = "授权 worker"
+            return methods, True, f"用户选择授权，高级扫描将通过 {launcher} 执行"
 
         if dialog.choice == "ordinary":
             if not ordinary_methods:
@@ -1200,4 +1215,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

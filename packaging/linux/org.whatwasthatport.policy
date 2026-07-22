@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1.0/policyconfig.dtd">
+<policyconfig>
+  <vendor>what-was-that-port contributors</vendor>
+  <vendor_url>https://example.invalid/what-was-that-port</vendor_url>
+
+  <action id="org.whatwasthatport.privileged-worker">
+    <description>Run privileged port scan worker</description>
+    <message>Authentication is required to run TCP SYN, TCP FIN, or UDP scans.</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/bin/what-was-that-port-worker</annotate>
+  </action>
+</policyconfig>

@@ -7,17 +7,16 @@ scanner_adapter.py
 3. 避免因为某个扫描模块导入失败导致整个图形界面直接崩溃。
 """
 
-import json
-import os
 import platform
-import shutil
 import subprocess
-import sys
-from pathlib import Path
 from typing import Any
 
-
-ADVANCED_METHODS = {"TCP SYN", "TCP FIN", "UDP"}
+from privilege_adapter import (
+    get_advanced_methods,
+    is_running_as_admin,
+    needs_privileged_scan,
+    run_privileged_worker,
+)
 
 
 COMMON_SERVICES = {
@@ -104,27 +103,6 @@ def make_error_row(ip: str, host_status: str, method: str, message: str) -> dict
         # ===== 新增：错误行携带原始错误信息 =====
         error_message=message,
     )
-
-
-def get_advanced_methods(methods: list[str]) -> list[str]:
-    """返回需要 CAP_NET_RAW/root 权限的扫描方式。"""
-    return [method for method in methods if method in ADVANCED_METHODS]
-
-
-def needs_privileged_scan(methods: list[str]) -> bool:
-    """当前选择是否包含高级扫描方式。"""
-    return bool(get_advanced_methods(methods))
-
-
-def is_running_as_root() -> bool:
-    """判断当前进程是否已经有 root 权限。非 POSIX 平台返回 False。"""
-    geteuid = getattr(os, "geteuid", None)
-    return bool(geteuid is not None and geteuid() == 0)
-
-
-def is_pkexec_available() -> bool:
-    """判断系统是否提供 pkexec。"""
-    return shutil.which("pkexec") is not None
 
 
 def icmp_ping(ip: str, timeout: float = 1.0) -> tuple[str, str]:
@@ -271,32 +249,19 @@ def scan_udp(ip: str, ports: list[int], host_status: str) -> list[dict]:
     return rows
 
 
-def scan_privileged_methods_with_pkexec(
+def scan_privileged_methods_with_worker(
     ip: str,
     ports: list[int],
     methods: list[str],
     host_status: str,
 ) -> list[dict]:
-    """通过 pkexec 启动高权限 worker 扫描 SYN/FIN/UDP，并读取 JSON 结果。"""
+    """通过平台提权 worker 扫描 SYN/FIN/UDP，并读取 JSON 结果。"""
     advanced_methods = get_advanced_methods(methods)
     if not advanced_methods:
         return []
 
-    worker_path = Path(__file__).resolve().with_name("privileged_worker.py")
-    if not worker_path.exists():
-        return [
-            make_error_row(ip, host_status, method, "缺少 privileged_worker.py")
-            for method in advanced_methods
-        ]
-
-    if is_running_as_root():
+    if is_running_as_admin():
         return scan_privileged_methods_direct(ip, ports, advanced_methods, host_status)
-
-    if not is_pkexec_available():
-        return [
-            make_error_row(ip, host_status, method, "未找到 pkexec，无法授权运行高级扫描")
-            for method in advanced_methods
-        ]
 
     request = {
         "ip": ip,
@@ -304,40 +269,12 @@ def scan_privileged_methods_with_pkexec(
         "methods": advanced_methods,
         "host_status": host_status,
     }
+    timeout = max(30, len(ports) * len(advanced_methods) * 4)
+    payload, error_message = run_privileged_worker(request, timeout=timeout)
 
-    try:
-        completed = subprocess.run(
-            ["pkexec", sys.executable, str(worker_path)],
-            input=json.dumps(request, ensure_ascii=False),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=max(30, len(ports) * len(advanced_methods) * 4),
-            check=False,
-        )
-    except subprocess.TimeoutExpired:
+    if error_message:
         return [
-            make_error_row(ip, host_status, method, "高级扫描授权进程超时")
-            for method in advanced_methods
-        ]
-    except Exception as exc:
-        return [
-            make_error_row(ip, host_status, method, f"启动 pkexec 失败：{exc}")
-            for method in advanced_methods
-        ]
-
-    if completed.returncode != 0:
-        message = completed.stderr.strip() or "用户取消授权或 pkexec 执行失败"
-        return [
-            make_error_row(ip, host_status, method, message)
-            for method in advanced_methods
-        ]
-
-    try:
-        payload = json.loads(completed.stdout)
-    except json.JSONDecodeError as exc:
-        return [
-            make_error_row(ip, host_status, method, f"高级扫描返回非 JSON 数据：{exc}")
+            make_error_row(ip, host_status, method, error_message)
             for method in advanced_methods
         ]
 
@@ -356,6 +293,16 @@ def scan_privileged_methods_with_pkexec(
         ]
 
     return rows
+
+
+def scan_privileged_methods_with_pkexec(
+    ip: str,
+    ports: list[int],
+    methods: list[str],
+    host_status: str,
+) -> list[dict]:
+    """Backward-compatible wrapper for tests and older callers."""
+    return scan_privileged_methods_with_worker(ip, ports, methods, host_status)
 
 
 def scan_privileged_methods_direct(
@@ -420,7 +367,7 @@ def real_scan(
     advanced_methods = get_advanced_methods(methods)
     if advanced_methods:
         if use_privileged_worker:
-            rows.extend(scan_privileged_methods_with_pkexec(ip, ports, advanced_methods, host_status))
+            rows.extend(scan_privileged_methods_with_worker(ip, ports, advanced_methods, host_status))
         else:
             rows.extend(scan_privileged_methods_direct(ip, ports, advanced_methods, host_status))
 

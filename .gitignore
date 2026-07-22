@@ -1,6 +1,7 @@
 # Python cache
 __pycache__/
 *.pyc
+*.egg-info/
 
 # Environment
 venv/
@@ -10,19 +11,9 @@ venv/
 .vscode/
 .idea/
 
-# Large files
-*.zip
-*.pdf# Python cache
-__pycache__/
-*.pyc
-
-# Environment
-venv/
-.env
-
-# IDE
-.vscode/
-.idea/
+# Build outputs
+build/
+dist/
 
 # Large files
 *.zip

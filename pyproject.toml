@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "what-was-that-port"
+version = "0.2.0"
+description = "Cross-platform GUI and CLI port scanner with privileged worker support"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+    { name = "what-was-that-port contributors" }
+]
+dependencies = [
+    "PySide6==6.11.1",
+    "PySide6_Addons==6.11.1",
+    "PySide6_Essentials==6.11.1",
+    "scapy==2.7.0",
+    "shiboken6==6.11.1",
+]
+
+[project.scripts]
+what-was-that-port = "main1:main"
+what-was-that-port-cli = "cli:main"
+what-was-that-port-worker = "privileged_worker:main"
+
+[project.optional-dependencies]
+packaging = [
+    "pyinstaller>=6.0",
+]
+
+[tool.setuptools]
+py-modules = [
+    "__init__",
+    "__main__",
+    "cli",
+    "fingerprints",
+    "host_discovery",
+    "main1",
+    "models",
+    "privilege_adapter",
+    "privileged_worker",
+    "scanner_adapter",
+    "service_fingerprint",
+    "tcp_connect_scanner",
+    "tcp_fin_scanner",
+    "tcp_syn_scanner",
+    "udp_scanner",
+    "utils",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

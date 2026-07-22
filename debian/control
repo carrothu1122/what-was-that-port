@@ -1,0 +1,15 @@
+Source: what-was-that-port
+Section: net
+Priority: optional
+Maintainer: what-was-that-port contributors <maintainers@example.invalid>
+Build-Depends: debhelper-compat (= 13), dh-python, python3-all, python3-setuptools, python3-wheel
+Standards-Version: 4.7.0
+Rules-Requires-Root: no
+
+Package: what-was-that-port
+Architecture: all
+Depends: ${misc:Depends}, python3 (>= 3.10), python3-pyside6.qtwidgets | python3-pyside6, python3-scapy, policykit-1
+Description: GUI and CLI port scanner
+ What Was That Port provides TCP Connect, TCP SYN, TCP FIN, UDP, ICMP,
+ and service fingerprinting scans. The GUI stays unprivileged and launches
+ a short-lived privileged worker for raw socket scan modes.

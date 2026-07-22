@@ -1,0 +1,5 @@
+what-was-that-port (0.2.0-1) unstable; urgency=medium
+
+  * Initial Debian packaging.
+
+ -- what-was-that-port contributors <maintainers@example.invalid>  Wed, 22 Jul 2026 11:45:00 +0800
