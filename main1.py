@@ -892,7 +892,7 @@ class PortScannerWindow(QMainWindow):
         for col, value in enumerate(values):
             item = QTableWidgetItem(value)
             item.setTextAlignment(Qt.AlignCenter)
-
+            item.setToolTip(str(value))
             # ===== 第 4 列：端口状态 — 增加风险高亮 =====
             if col == 4:
                 risk_level = get_risk_level(raw_port, raw_status)
@@ -977,7 +977,7 @@ class PortScannerWindow(QMainWindow):
         for col, value in enumerate(values):
             item = QTableWidgetItem(value)
             item.setTextAlignment(Qt.AlignCenter)
-
+            item.setToolTip(str(value))
             if col == 4:
                 risk_level = get_risk_level(raw_port, raw_status)
                 if risk_level == "high":
