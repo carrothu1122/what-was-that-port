@@ -1,8 +1,13 @@
-import csv
 import ipaddress
 import sys
 import textwrap
 from pathlib import Path
+
+from csv_export import (
+    RESULT_COLUMN_HEADERS,
+    RESULT_FIELDNAMES,
+    write_csv_rows,
+)
 
 # 确保 tcp_scanner 包的父目录在 sys.path 中，
 # 这样无论在哪个目录下运行 main1.py 都能正确 import tcp_scanner
@@ -376,20 +381,8 @@ class PortScannerWindow(QMainWindow):
             QSizePolicy.Expanding,
             QSizePolicy.Expanding,
         )
-        # ===== 修改：从 6 列扩展为 9 列 =====
-        self.result_table.setColumnCount(9)
-        self.result_table.setHorizontalHeaderLabels([
-            "目标 IP",
-            "主机状态",
-            "扫描方式",
-            "端口号",
-            "端口状态",
-            "服务名称",
-            # ===== 新增列 =====
-            "详情",
-            "耗时",
-            "错误原因",
-        ])
+        self.result_table.setColumnCount(len(RESULT_FIELDNAMES))
+        self.result_table.setHorizontalHeaderLabels(RESULT_COLUMN_HEADERS)
 
         # ===== 调整：结果表格列宽比例 =====
         header = self.result_table.horizontalHeader()
@@ -891,22 +884,7 @@ class PortScannerWindow(QMainWindow):
         row = self.result_table.rowCount()
         self.result_table.insertRow(row)
 
-        # ===== 新增：格式化耗时 =====
-        elapsed_ms = result.get("elapsed_ms")
-        elapsed_text = f"{elapsed_ms:.2f} ms" if isinstance(elapsed_ms, (int, float)) else "-"
-
-        values = [
-            result["ip"],
-            result["host_status"],
-            result["method"],
-            str(result["port"]),
-            result["port_status"],
-            result["service"],
-            # ===== 新增列值 =====
-            result.get("detail", "-"),
-            elapsed_text,
-            result.get("error_reason", ""),
-        ]
+        values = self.result_table_values(result)
 
         raw_status = result["port_status"]
         raw_port = result.get("port", "-")
@@ -991,20 +969,7 @@ class PortScannerWindow(QMainWindow):
         row = self.result_table.rowCount()
         self.result_table.insertRow(row)
 
-        elapsed_ms = result.get("elapsed_ms")
-        elapsed_text = f"{elapsed_ms:.2f} ms" if isinstance(elapsed_ms, (int, float)) else "-"
-
-        values = [
-            result["ip"],
-            result["host_status"],
-            result["method"],
-            str(result["port"]),
-            result["port_status"],
-            result["service"],
-            result.get("detail", "-"),
-            elapsed_text,
-            result.get("error_reason", ""),
-        ]
+        values = self.result_table_values(result)
 
         raw_status = result["port_status"]
         raw_port = result.get("port", "-")
@@ -1055,6 +1020,20 @@ class PortScannerWindow(QMainWindow):
 
             self.result_table.setItem(row, col, item)
 
+    @staticmethod
+    def result_table_values(result: dict) -> list[str]:
+        """按共享列配置生成 GUI 表格值。"""
+        elapsed_ms = result.get("elapsed_ms")
+        elapsed_text = f"{elapsed_ms:.2f} ms" if isinstance(elapsed_ms, (int, float)) else "-"
+        display_overrides = {
+            "port": str(result.get("port", "-")),
+            "elapsed_ms": elapsed_text,
+        }
+        return [
+            str(display_overrides.get(field, result.get(field, "")))
+            for field in RESULT_FIELDNAMES
+        ]
+
     def export_csv(self):
         if not self.results:
             
@@ -1073,23 +1052,7 @@ class PortScannerWindow(QMainWindow):
 
         try:
             with open(file_path, "w", newline="", encoding="utf-8-sig") as f:
-                writer = csv.DictWriter(
-                    f,
-                    fieldnames=[
-                        "ip",
-                        "host_status",
-                        "method",
-                        "port",
-                        "port_status",
-                        "service",
-                        # ===== 新增导出列 =====
-                        "detail",
-                        "elapsed_ms",
-                        "error_reason",
-                    ]
-                )
-                writer.writeheader()
-                writer.writerows(self.results)
+                write_csv_rows(f, self.results)
 
             self.show_message("导出成功", f"扫描结果已成功导出。\n\n文件位置：\n{file_path}", "information")
             self.log(f"[INFO] 扫描结果已导出：{file_path}")
